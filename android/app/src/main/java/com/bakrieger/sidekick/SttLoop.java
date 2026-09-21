@@ -32,7 +32,6 @@ public class SttLoop {
     private MediaRecorder recorder;
     private File chunkFile;
     private Callback cb;
-    private int chunkMaxAmp = 0;
     private String lastTail = "";   // previous transcript tail = whisper anti-hallucination prompt
 
     public SttLoop(Context c) {
@@ -82,8 +81,6 @@ public class SttLoop {
             recorder.setOutputFile(chunkFile.getAbsolutePath());
             recorder.prepare();
             recorder.start();
-            chunkMaxAmp = 0;
-            pollAmp();
             timer.postDelayed(this::finishChunk, CHUNK_MS);
         } catch (Exception e) {
             Diag.log("stt: recorder FAIL " + e.getMessage());
@@ -92,21 +89,9 @@ public class SttLoop {
         }
     }
 
-    private void pollAmp() {
-        if (!running || recorder == null) return;
-        try {
-            int a = recorder.getMaxAmplitude();
-            if (a > chunkMaxAmp) chunkMaxAmp = a;
-        } catch (Exception ignored) {}
-        timer.postDelayed(this::pollAmp, 400);
-    }
-
     private void finishChunk() {
         final byte[] bytes = stopRecorderAndGet();
-        final int amp = chunkMaxAmp;
-        if (bytes == null || bytes.length < 2500 || amp < 350) {
-            // silence gate: quiet chunk = skip upload entirely
-            Diag.log("stt: skip quiet chunk amp=" + amp);
+        if (bytes == null || bytes.length < 2500) {
             recordNext();
             return;
         }
@@ -114,11 +99,12 @@ public class SttLoop {
         new Thread(() -> {
             try {
                 final String text = transcribe(bytes, promptTail);
-                if (text != null && !text.isEmpty()) {
+                if (isLikelyHallucination(text)) {
+                    Diag.log("stt: drop phantom \"" + (text == null ? "" : text.trim()) + "\"");
+                } else {
                     lastTail = text.length() > 200 ? text.substring(text.length() - 200) : text;
+                    if (cb != null) ui.post(() -> cb.onTranscript(text, null));
                 }
-                if (cb != null) ui.post(() -> cb.onTranscript(text, null));
-                Diag.log("stt: amp=" + amp);
             } catch (Exception e) {
                 Diag.log("stt: upload FAIL " + e.getMessage());
                 if (cb != null) ui.post(() -> cb.onTranscript(null, e.getMessage()));
@@ -147,6 +133,23 @@ public class SttLoop {
             recorder = null;
         }
         return null;
+    }
+
+    /** Content filter: whisper's known phantom phrases in isolation = not real speech. */
+    private static boolean isLikelyHallucination(String t) {
+        if (t == null) return true;
+        String s = t.trim().toLowerCase().replaceAll("[^a-z ]", " ").replaceAll("\s+", " ").trim();
+        if (s.isEmpty()) return true;
+        if (s.split(" ").length <= 3) {
+            String[] phantoms = {
+                "thank you", "thanks", "thanks for watching", "you", "bye", "amen",
+                "okay", "ok", "yes", "no", "please subscribe", "music", "alright", "very good"
+            };
+            for (String p : phantoms) {
+                if (s.equals(p)) return true;
+            }
+        }
+        return false;
     }
 
     private String transcribe(byte[] audio, String promptTail) throws Exception {
