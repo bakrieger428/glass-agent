@@ -30,6 +30,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.ArrayList;
 import java.util.Locale;
 
 /**
@@ -54,8 +55,6 @@ public class MainActivity extends Activity {
     private static final long AUTO_COOLDOWN_MS = 20000;
 
     private TextView statusView;
-    private TextView questionView;
-    private TextView answerView;
     private ScrollView scroller;
     private TextToSpeech tts;
     private boolean ttsReady = false;
@@ -80,15 +79,18 @@ public class MainActivity extends Activity {
     private boolean listenOn = false;
     private final StringBuilder transcriptBuf = new StringBuilder();
     private int wordsSinceCheck = 0;
-    private TextView liveView;
     private TextView modeView;
+    private TextView historyView;
+    private TextView statusLine;
+    private final java.util.ArrayList<String> history = new ArrayList<>();
+    private static final int HISTORY_MAX = 25;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().setBackgroundDrawableResource(android.R.color.black);
+        getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         buildUi();
         initTts();
         requestCamera();
@@ -107,6 +109,7 @@ public class MainActivity extends Activity {
         }
         Diag.log("boot: ui up, auto=" + autoOn);
         updateModeLine();
+        seedHistoryFromEpisodes();
     }
 
     @Override
@@ -131,7 +134,6 @@ public class MainActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.BLACK);
         root.setPadding(24, 16, 24, 16);
 
         TextView title = new TextView(this);
@@ -146,40 +148,24 @@ public class MainActivity extends Activity {
         statusView.setTextSize(12);
         statusView.setLineSpacing(2, 1);
 
-        liveView = new TextView(this);
-        liveView.setTextColor(GREEN_MID);
-        liveView.setTypeface(Typeface.MONOSPACE);
-        liveView.setTextSize(13);
-        liveView.setLineSpacing(2, 1);
-        liveView.setPadding(0, 10, 0, 6);
+        statusLine = new TextView(this);
+        statusLine.setTextColor(GREEN_MID);
+        statusLine.setTypeface(Typeface.MONOSPACE);
+        statusLine.setTextSize(13);
+        statusLine.setPadding(0, 10, 0, 6);
 
-        questionView = new TextView(this);
-        questionView.setTextColor(GREEN_MID);
-        questionView.setTypeface(Typeface.MONOSPACE);
-        questionView.setTextSize(15);
-        questionView.setPadding(0, 12, 0, 6);
-
-        answerView = new TextView(this);
-        answerView.setTextColor(GREEN);
-        answerView.setTypeface(Typeface.MONOSPACE);
-        answerView.setTextSize(19);
-        answerView.setLineSpacing(4, 1);
-
-        TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: capture  \u25B2\u25BC\u25C0\u25B6: scroll\n2-FINGER: listen · modes/keys: :8080");
-        hint.setTextColor(GREEN_DIM);
-        hint.setTypeface(Typeface.MONOSPACE);
-        hint.setTextSize(11);
-        hint.setPadding(0, 16, 0, 0);
-        hint.setGravity(Gravity.BOTTOM);
+        historyView = new TextView(this);
+        historyView.setTextColor(GREEN);
+        historyView.setTypeface(Typeface.MONOSPACE);
+        historyView.setTextSize(17);
+        historyView.setLineSpacing(4, 1);
 
         scroller = new ScrollView(this);
         scroller.setFillViewport(true);
         LinearLayout inner = new LinearLayout(this);
         inner.setOrientation(LinearLayout.VERTICAL);
-        inner.addView(liveView);
-        inner.addView(questionView);
-        inner.addView(answerView);
+        inner.addView(statusLine);
+        inner.addView(historyView);
         scroller.addView(inner, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -241,7 +227,7 @@ public class MainActivity extends Activity {
             stillRun = 0;
             Diag.log("auto: TRIGGER fired (motion+still pattern)");
             runOnUiThread(() -> {
-                answerView.setText("AUTO \u2014 reading your writing...");
+                statusLine.setText("AUTO \u2014 reading your writing...");
                 fireCapture(true);
             });
         }
@@ -287,12 +273,12 @@ public class MainActivity extends Activity {
     private void fireCapture(final boolean isAuto) {
         if (busy) return;
         busy = true;
-        questionView.setText("");
+        statusLine.setText("");
         motionRun = 0;
         stillRun = 0;
         prevFrame = null;
         Diag.log("capture: " + (isAuto ? "AUTO" : "tap"));
-        if (!isAuto) answerView.setText("Capturing...");
+        statusLine.setText(isAuto ? "AUTO reading..." : "Capturing...");
         captureWithExposure(isAuto, 0);
     }
 
@@ -310,49 +296,50 @@ public class MainActivity extends Activity {
                 boolean tooDark = mean < 45f || darkPct > 60f;
                 if (exposurePass == 0 && blown) {
                     Diag.log("cam: blown -> retry -1EV");
-                    if (!isAuto) answerView.setText("Adjusting exposure...");
+                    statusLine.setText("Adjusting exposure...");
                     captureWithExposure(isAuto, 2);
                     return;
                 }
                 if (exposurePass == 2 && blown) {
                     Diag.log("cam: still blown -> retry -2EV");
-                    if (!isAuto) answerView.setText("Adjusting exposure...");
+                    statusLine.setText("Adjusting exposure...");
                     captureWithExposure(isAuto, 3);
                     return;
                 }
                 if (exposurePass == 0 && tooDark) {
                     Diag.log("cam: dark -> retry +2EV");
-                    if (!isAuto) answerView.setText("Adjusting exposure...");
+                    statusLine.setText("Adjusting exposure...");
                     captureWithExposure(isAuto, 1);
                     return;
                 }
                 jpeg = CameraService.boostBrightness(jpeg, 2.2f);
                 saveLastCapture(jpeg);
-                answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
+                statusLine.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
                 AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
                     @Override public void onAnswer(String q, String a, String provider) {
                         busy = false;
+                        statusLine.setText("");
                         Diag.log("ai: answered via " + provider + " len=" + (a == null ? 0 : a.length()));
                         boolean noText = a != null && a.startsWith("No handwriting");
                         if (isAuto && noText) {
                             Diag.log("auto: no text (quiet)");
                             return; // auto fires stay quiet on misses
                         }
-                        if (q != null && !q.isEmpty()) questionView.setText("Q: " + q);
-                        answerView.setText(a);
+                        addHistory("Q: " + (q == null || q.isEmpty() ? "(screen)" : q) + "\nA: " + a);
                         logEpisode(q, a, provider);
                         speak(a);
                     }
                     @Override public void onError(String message) {
                         busy = false;
                         Diag.log("ai: ERROR " + message);
-                        if (!isAuto) answerView.setText("ERROR: " + message);
+                        if (!isAuto) addHistory("ERROR: " + message);
                     }
                 });
             }
             @Override public void onError(String message) {
                 busy = false;
-                answerView.setText("CAMERA ERROR: " + message);
+                statusLine.setText("");
+                addHistory("CAMERA ERROR: " + message);
             }
         }, exposurePass);
     }
@@ -510,9 +497,6 @@ public class MainActivity extends Activity {
     }
 
     private void showFlag(String flags) {
-        String cur = liveView.getText().toString();
-        String[] parts = cur.split("\n");
-        String prev = parts.length > 0 ? parts[0] : "";
         StringBuilder nv = new StringBuilder();
         for (String line : flags.split("\n")) {
             String t = line.trim();
@@ -520,9 +504,47 @@ public class MainActivity extends Activity {
             String marker = t.startsWith("TIP") ? "\u25B8" : "\u25C6";
             nv.append(marker).append(' ').append(t).append('\n');
         }
-        if (prev.length() > 0) nv.append(prev);
-        liveView.setText(nv.toString().trim());
+        if (nv.length() > 0) addHistory(nv.toString().trim());
         Diag.log("FLAG shown");
+    }
+
+    /** Add a block to the scrollback (newest first, max 25). */
+    private void addHistory(String block) {
+        if (block == null || block.trim().isEmpty()) return;
+        history.add(0, block.trim());
+        while (history.size() > HISTORY_MAX) history.remove(history.size() - 1);
+        historyView.setText(android.text.TextUtils.join("\n\u2014\u2014\u2014\u2014\n", history));
+        scroller.smoothScrollTo(0, 0);
+    }
+
+    /** Seed history with today's saved episodes so restarts keep context. */
+    private void seedHistoryFromEpisodes() {
+        try {
+            String day = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+            File f = new File(new File(getFilesDir(), "episodes"), day + ".jsonl");
+            if (!f.exists()) return;
+            java.util.List<String> lines = new ArrayList<>();
+            java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(f));
+            String l;
+            while ((l = br.readLine()) != null) lines.add(l);
+            br.close();
+            int start = Math.max(0, lines.size() - HISTORY_MAX);
+            for (int i = start; i < lines.size(); i++) {
+                try {
+                    org.json.JSONObject o = new org.json.JSONObject(lines.get(i));
+                    String q = o.optString("q", "");
+                    String a = o.optString("a", "");
+                    if (!q.isEmpty() || !a.isEmpty()) {
+                        history.add("Q: " + q + "\nA: " + a);
+                    }
+                } catch (Exception ignored) {}
+            }
+            while (history.size() > HISTORY_MAX) history.remove(history.size() - 1);
+            historyView.setText(android.text.TextUtils.join("\n\u2014\u2014\u2014\u2014\n", history));
+            Diag.log("hist: seeded " + history.size() + " from episodes");
+        } catch (Exception e) {
+            Diag.log("hist: seed fail " + e.getMessage());
+        }
     }
 
     /** iPhone keyboard input: /type POST lands here. */
@@ -530,15 +552,15 @@ public class MainActivity extends Activity {
         if (text == null || text.trim().isEmpty()) return;
         final String q = text.trim();
         Diag.log("typed: \"" + (q.length() > 60 ? q.substring(0, 60) + "..." : q) + "\"");
-        questionView.setText("Q: " + q);
-        answerView.setText("Thinking...");
+        statusLine.setText("Thinking...");
         String mem = GlassMemory.contextFor(this, q);
         String user = (mem.isEmpty() ? "" : "KNOWN MEMORY:\n" + mem + "\n\n") + q;
         AiRouter.askText(this,
                 "You are Sidekick, an assistant on the user's smart glasses. Answer concisely, max 90 words.",
                 user, 220,
                 answer -> {
-                    answerView.setText(answer == null || answer.isEmpty() ? "(no answer)" : answer);
+                    statusLine.setText("");
+                    addHistory("Q: " + q + "\nA: " + (answer == null || answer.isEmpty() ? "(no answer)" : answer));
                     Diag.log("typed: answered len=" + (answer == null ? 0 : answer.length()));
                     logEpisode(q, answer, "typed");
                     speak(answer);
