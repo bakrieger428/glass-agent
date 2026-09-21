@@ -98,11 +98,6 @@ public final class CameraService {
         }
     }
 
-    /** Open camera, take one still JPEG, close. Callbacks arrive on the main thread. */
-    public static void capture(final Context ctx, final Callback cb) {
-        capture(ctx, cb, 2600);
-    }
-
     /** Full capture for paper OCR: walks the config ladder until the sensor delivers. */
     public static void capture(final Context ctx, final Callback cb) {
         walkLadder(ctx, cb, new int[]{0, 1, 2, 3, 4}, 0);

@@ -287,7 +287,7 @@ public class MainActivity extends Activity {
                 busy = false;
                 answerView.setText("CAMERA ERROR: " + message);
             }
-        }, 2600);
+        });
     }
 
     // ---------- Input ----------
