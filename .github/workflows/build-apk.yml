@@ -33,6 +33,20 @@ jobs:
       - name: Rename APK
         run: cp android/app/build/outputs/apk/release/app-release.apk Sidekick.apk
 
+      - name: Diagnose APK vs known-good
+        run: |
+          ls "$ANDROID_HOME/build-tools" || true
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "=== OUR APK badging ==="
+          "$BT/aapt" dump badging Sidekick.apk | head -25
+          echo "=== OUR APK signature ==="
+          "$BT/apksigner" verify --verbose Sidekick.apk | head -18 || true
+          curl -sL https://github.com/eung3392/eungsoft/releases/download/RokidGlassesApp/EKTimer_v1.0.0.apk -o ektimer.apk
+          echo "=== EK TIMER badging (known-good) ==="
+          "$BT/aapt" dump badging ektimer.apk | head -25
+          echo "=== EK TIMER signature ==="
+          "$BT/apksigner" verify --verbose ektimer.apk | head -18 || true
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
