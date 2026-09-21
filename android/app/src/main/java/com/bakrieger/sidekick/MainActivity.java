@@ -31,7 +31,7 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * Sidekick v0.1.3 — HUD (monochrome green), temple-tap PaperChat.
+ * Sidekick v0.1.4 — HUD (monochrome green), temple-tap PaperChat.
  * Tap = capture handwritten question + answer.
  * LONG-PRESS (0.8s) = cycle display rotation 0/90/180/270 (persisted).
  * Settings/keys: http://<glasses-ip>:8080 in Safari on the iPhone.
@@ -41,7 +41,7 @@ public class MainActivity extends Activity {
     private static final int GREEN = Color.parseColor("#00FF46");
     private static final int GREEN_MID = Color.parseColor("#00A62E");
     private static final int GREEN_DIM = Color.parseColor("#006619");
-    private static final String K_ROT = "ui.rotation";
+    private static final String K_ROT = "ui.rot.v2"; // new key: ignores any value saved by the broken gesture build
 
     private TextView statusView;
     private TextView questionView;
@@ -53,12 +53,6 @@ public class MainActivity extends Activity {
     private boolean busy = false;
     private long lastTap = 0;
 
-    // long-press state
-    private final Handler h = new Handler(Looper.getMainLooper());
-    private boolean armed = false;      // long-press fired -> rotation cycled
-    private boolean waiting = false;    // waiting to see if press becomes long
-    private final Runnable longPress = this::onLongPress;
-    private final Runnable pendingCapture = this::doCapture;
 
     private int rotation = 0;
 
@@ -70,7 +64,7 @@ public class MainActivity extends Activity {
         buildUi();
         initTts();
         requestCamera();
-        rotation = Prefs.getInt(this, K_ROT, 0);
+        rotation = Prefs.getInt(this, K_ROT, 270); // -90 deg: corrects portrait-mounted panel
         SettingsServer server = new SettingsServer(this, this::statusJson);
         boolean httpUp = server.start();
         final StringBuilder sb = new StringBuilder();
@@ -117,7 +111,7 @@ public class MainActivity extends Activity {
         answerView.setLineSpacing(4, 1);
 
         TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: capture handwritten question\n\u25B2\u25BC SWIPE: scroll  ·  HOLD: rotate view");
+        hint.setText("\u25B6 TAP: capture handwritten question\n\u25B2\u25BC SWIPE: scroll");
         hint.setTextColor(GREEN_DIM);
         hint.setTypeface(Typeface.MONOSPACE);
         hint.setTextSize(12);
@@ -186,21 +180,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void onLongPress() {
-        armed = true;
-        waiting = false;
-        rotation = (rotation + 90) % 360;
-        Prefs.setInt(this, K_ROT, rotation);
-        applyRotation();
-        answerView.setText("rotation " + rotation + "\u00B0 (saved)");
-    }
-
     // ---------- Input ----------
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            if (event.getRepeatCount() == 0) startPressWatch();
+            if (event.getRepeatCount() == 0) triggerCapture();
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
@@ -219,43 +204,12 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            endPressWatch();
-            return true;
-        }
-        return super.onKeyUp(keyCode, event);
-    }
-
-    @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            startPressWatch();
-            return true;
-        }
-        if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-            endPressWatch();
+            triggerCapture();
             return true;
         }
         return super.onTouchEvent(event);
-    }
-
-    /** Press started: wait 800ms -> long-press (rotate); release before -> tap (capture). */
-    private void startPressWatch() {
-        armed = false;
-        waiting = true;
-        h.postDelayed(longPress, 800);
-    }
-
-    private void endPressWatch() {
-        if (waiting) {
-            h.removeCallbacks(longPress);
-            waiting = false;
-            triggerCapture();
-        } else if (!armed) {
-            triggerCapture();
-        }
-        armed = false;
     }
 
     private void triggerCapture() {
@@ -385,7 +339,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.1.3\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.1.4\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"rotation\":" + rotation
