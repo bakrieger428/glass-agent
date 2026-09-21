@@ -10,8 +10,8 @@ android {
         applicationId 'com.bakrieger.sidekick'
         minSdk 21
         targetSdk 33
-        versionCode 22
-        versionName '0.4.4'
+        versionCode 23
+        versionName '0.4.5'
     }
 
     signingConfigs {

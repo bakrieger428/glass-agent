@@ -90,7 +90,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         instance = this;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+        getWindow().setBackgroundDrawableResource(android.R.color.black);
         buildUi();
         initTts();
         requestCamera();
@@ -134,6 +134,7 @@ public class MainActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.BLACK);
         root.setPadding(24, 16, 24, 16);
 
         TextView title = new TextView(this);
