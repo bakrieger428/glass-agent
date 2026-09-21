@@ -481,7 +481,7 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        if (lower.startsWith("remember that") || (lower.contains("sidekick") && lower.contains("remember"))) {
+        if (lower.contains("remember that")) {
             String fact = text.trim();
             int ri = lower.indexOf("remember that");
             if (ri >= 0) fact = text.trim().substring(ri + 13).trim();
@@ -717,7 +717,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.4.1\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.4.7\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn

@@ -73,7 +73,12 @@ public class SttLoop {
             stopRecorder();
             chunkFile = new File(ctx.getCacheDir(), "stt_chunk.m4a");
             recorder = new MediaRecorder();
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            String srcPref = Prefs.get(ctx, "stt.source");
+            int audioSrc = MediaRecorder.AudioSource.VOICE_RECOGNITION; // default: voice-boosted DSP
+            if ("mic".equals(srcPref)) audioSrc = MediaRecorder.AudioSource.MIC;
+            else if ("call".equals(srcPref)) audioSrc = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
+            recorder.setAudioSource(audioSrc);
+            Diag.log("stt: source=" + (srcPref.isEmpty() ? "voicerec" : srcPref));
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
             recorder.setAudioEncodingBitRate(64000);

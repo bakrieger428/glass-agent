@@ -103,6 +103,7 @@ public final class AiRouter {
         final Handler ui = new Handler(Looper.getMainLooper());
         new Thread(() -> {
             String[][] providers = {
+                {"deepinfra", "https://api.deepinfra.com/v1/openai", "google/gemini-3.1-flash-lite"},
                 {"deepinfra", "https://api.deepinfra.com/v1/openai", "Qwen/Qwen3.8-Flash"},
                 {"deepinfra", "https://api.deepinfra.com/v1/openai", "deepseek-ai/DeepSeek-V4-Flash"},
                 {"zai", "https://api.z.ai/api/paas/v4", "glm-4-air"},

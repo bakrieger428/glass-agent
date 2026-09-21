@@ -98,6 +98,12 @@ public final class SettingsServer {
                 respond(sock, "200", "text/plain",
                         "SAVED\n\nDeepInfra key: " + mask(di) + "\nz.ai key: " + mask(zai)
                         + "\n\nReturn to your glasses. You can close this page.");
+            } else if (path.startsWith("/audiosrc")) {
+                String qs = path.contains("?") ? path.substring(path.indexOf('?') + 1) : body;
+                String mode = param(qs, "mode");
+                if (mode.isEmpty()) mode = "voicerec";
+                Prefs.set(ctx, "stt.source", mode);
+                respond(sock, "200", "text/plain", "mic mode set: " + mode + " (applies to next chunk)");
             } else if (path.startsWith("/idle")) {
                 String qs = path.contains("?") ? path.substring(path.indexOf('?') + 1) : body;
                 int sec = 15;
@@ -226,6 +232,10 @@ public final class SettingsServer {
             + "<form method='POST' action='/type'>"
             + "<input name='text' style='width:70%;padding:10px;font:16px monospace;background:#020;color:#0f6;border:1px solid #060' placeholder='Ask anything - the answer appears on your glasses'>"
             + " <button>Send</button></form>"
+            + "<hr style='border-color:#060;margin:20px 0'><h2>Mic mode (TV noise isolation)</h2>"
+            + "<button onclick=\"fetch('/audiosrc?mode=voicerec')\">Voice-boosted (default)</button>"
+            + " <button onclick=\"fetch('/audiosrc?mode=mic')\">Standard mic</button>"
+            + " <button onclick=\"fetch('/audiosrc?mode=call')\">Call-quality (max suppression)</button>"
             + "<hr style='border-color:#060;margin:20px 0'><h2>Auto-capture idle time</h2>"
             + "<input type='range' min='5' max='30' step='5' id='idle' value='15' oninput='document.getElementById(\"idlev\").textContent=this.value+\"s\"'>"
             + " <span id='idlev'>15s</span>"
