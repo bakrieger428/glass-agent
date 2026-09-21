@@ -6,6 +6,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.wifi.WifiManager;
@@ -31,30 +33,44 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * Sidekick v0.1.4 — HUD (monochrome green), temple-tap PaperChat.
- * Tap = capture handwritten question + answer.
- * LONG-PRESS (0.8s) = cycle display rotation 0/90/180/270 (persisted).
- * Settings/keys: http://<glasses-ip>:8080 in Safari on the iPhone.
+ * Sidekick v0.2.0 — proactive PaperChat.
+ * AUTO: glasses glance every 5s; when motion settles into stillness (you finished
+ * writing and are holding the paper up) it captures and answers WITHOUT a tap.
+ * TAP = manual capture. DPAD_LEFT = toggle auto. Swipe/volume = scroll.
+ * Keys page: http://<glasses-ip>:8080 (photo viewer + test button).
  */
 public class MainActivity extends Activity {
 
     private static final int GREEN = Color.parseColor("#00FF46");
     private static final int GREEN_MID = Color.parseColor("#00A62E");
     private static final int GREEN_DIM = Color.parseColor("#006619");
-    private static final String K_ROT = "ui.rot.v2"; // new key: ignores any value saved by the broken gesture build
+
+    // auto-detect tuning
+    private static final long SCAN_MS = 5000;        // glance interval
+    private static final float MOTION_DIFF = 14f;    // mean-abs luminance delta = motion
+    private static final float STILL_DIFF = 6f;      // below this = still
+    private static final int NEED_MOTION = 2;        // consecutive motion scans
+    private static final int NEED_STILL = 2;         // consecutive still scans after motion
+    private static final long AUTO_COOLDOWN_MS = 20000;
 
     private TextView statusView;
     private TextView questionView;
     private TextView answerView;
     private ScrollView scroller;
-    private LinearLayout root;
     private TextToSpeech tts;
     private boolean ttsReady = false;
     private boolean busy = false;
     private long lastTap = 0;
 
-
-    private int rotation = 0;
+    // auto loop state
+    private final Handler auto = new Handler(Looper.getMainLooper());
+    private final Runnable tick = this::autoScan;
+    private boolean autoOn = true;
+    private float[] prevFrame = null;
+    private int motionRun = 0;
+    private int stillRun = 0;
+    private long lastAutoFire = 0;
+    private boolean scanning = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,7 +80,6 @@ public class MainActivity extends Activity {
         buildUi();
         initTts();
         requestCamera();
-        rotation = Prefs.getInt(this, K_ROT, 270); // -90 deg: corrects portrait-mounted panel
         SettingsServer server = new SettingsServer(this, this::statusJson);
         boolean httpUp = server.start();
         final StringBuilder sb = new StringBuilder();
@@ -73,49 +88,58 @@ public class MainActivity extends Activity {
           .append("wifi ").append(wifiIp() != null ? wifiIp() : "not connected").append('\n')
           .append("net ").append(AiRouter.probe(this)).append('\n')
           .append("cam ").append(CameraService.cameraInfo(this)).append('\n')
-          .append("rot ").append(rotation).append('\n')
           .append("tts ").append("checking");
         statusView.setText(sb.toString());
-        // apply rotation after first layout
-        root.post(() -> applyRotation());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (autoOn) auto.postDelayed(tick, SCAN_MS);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        auto.removeCallbacks(tick);
     }
 
     private void buildUi() {
-        root = new LinearLayout(this);
+        LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
-        root.setPadding(28, 20, 28, 20);
+        root.setPadding(24, 16, 24, 16);
 
         TextView title = new TextView(this);
         title.setText("SIDEKICK");
         title.setTextColor(GREEN);
         title.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        title.setTextSize(26);
+        title.setTextSize(22);
 
         statusView = new TextView(this);
         statusView.setTextColor(GREEN_DIM);
         statusView.setTypeface(Typeface.MONOSPACE);
-        statusView.setTextSize(13);
+        statusView.setTextSize(12);
         statusView.setLineSpacing(2, 1);
 
         questionView = new TextView(this);
         questionView.setTextColor(GREEN_MID);
         questionView.setTypeface(Typeface.MONOSPACE);
-        questionView.setTextSize(16);
-        questionView.setPadding(0, 16, 0, 8);
+        questionView.setTextSize(15);
+        questionView.setPadding(0, 12, 0, 6);
 
         answerView = new TextView(this);
         answerView.setTextColor(GREEN);
         answerView.setTypeface(Typeface.MONOSPACE);
-        answerView.setTextSize(21);
+        answerView.setTextSize(19);
         answerView.setLineSpacing(4, 1);
 
         TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: capture handwritten question\n\u25B2\u25BC SWIPE: scroll");
+        hint.setText("\u25B6 TAP: capture  \u25C0: auto on/off\n\u25B2\u25BC SWIPE: scroll  ·  AUTO: no tap needed");
         hint.setTextColor(GREEN_DIM);
         hint.setTypeface(Typeface.MONOSPACE);
-        hint.setTextSize(12);
-        hint.setPadding(0, 20, 0, 0);
+        hint.setTextSize(11);
+        hint.setPadding(0, 16, 0, 0);
         hint.setGravity(Gravity.BOTTOM);
 
         scroller = new ScrollView(this);
@@ -135,49 +159,122 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
-    // ---------- Rotation (glasses panels mount in different orientations) ----------
+    // ---------- Auto-detect loop: glance -> motion/stillness analysis ----------
 
-    private void applyRotation() {
-        View decor = getWindow().getDecorView();
-        int w = decor.getWidth();
-        int hgt = decor.getHeight();
-        if (w <= 0 || hgt <= 0) return;
-        ViewGroup.LayoutParams lp = root.getLayoutParams();
-        if (rotation == 90 || rotation == 270) {
-            lp.width = hgt;
-            lp.height = w;
-        } else {
-            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
-            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+    private void autoScan() {
+        if (!autoOn) return;
+        if (!busy && !scanning && hasCameraPermission()) {
+            scanning = true;
+            CameraService.capture(this, new CameraService.Callback() {
+                @Override public void onJpeg(byte[] jpeg) {
+                    scanning = false;
+                    float[] frame = decodeSmall(jpeg);
+                    if (frame != null && prevFrame != null && frame.length == prevFrame.length) {
+                        float diff = meanAbsDiff(frame, prevFrame);
+                        if (diff > MOTION_DIFF) {
+                            motionRun++;
+                            stillRun = 0;
+                        } else if (diff < STILL_DIFF) {
+                            stillRun++;
+                        } else {
+                            stillRun = 0;
+                        }
+                        maybeFire();
+                    }
+                    prevFrame = frame;
+                }
+                @Override public void onError(String message) {
+                    scanning = false;
+                }
+            }, 640);
         }
-        root.setLayoutParams(lp);
-        root.setPivotX(0f);
-        root.setPivotY(0f);
-        switch (rotation) {
-            case 90:
-                root.setRotation(90);
-                root.setTranslationX(w);
-                root.setTranslationY(0);
-                break;
-            case 180:
-                root.setRotation(180);
-                lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
-                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
-                root.setLayoutParams(lp);
-                root.setTranslationX(w);
-                root.setTranslationY(hgt);
-                break;
-            case 270:
-                root.setRotation(270);
-                root.setTranslationX(0);
-                root.setTranslationY(hgt);
-                break;
-            default:
-                root.setRotation(0);
-                root.setTranslationX(0);
-                root.setTranslationY(0);
-                break;
+        auto.postDelayed(tick, SCAN_MS);
+    }
+
+    private void maybeFire() {
+        long now = System.currentTimeMillis();
+        if (motionRun >= NEED_MOTION && stillRun >= NEED_STILL
+                && now - lastAutoFire > AUTO_COOLDOWN_MS && !busy) {
+            lastAutoFire = now;
+            motionRun = 0;
+            stillRun = 0;
+            runOnUiThread(() -> {
+                answerView.setText("AUTO \u2014 reading your writing...");
+                fireCapture(true);
+            });
         }
+    }
+
+    private static float[] decodeSmall(byte[] jpeg) {
+        try {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o);
+            int sample = 1;
+            while (o.outWidth / (sample * 2) >= 64) sample *= 2;
+            BitmapFactory.Options o2 = new BitmapFactory.Options();
+            o2.inSampleSize = sample;
+            Bitmap bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o2);
+            if (bmp == null) return null;
+            int w = Math.max(1, bmp.getWidth() / 4);
+            int h = Math.max(1, bmp.getHeight() / 4);
+            Bitmap small = Bitmap.createScaledBitmap(bmp, w, h, true);
+            int[] px = new int[w * h];
+            small.getPixels(px, 0, w, 0, 0, w, h);
+            float[] gray = new float[w * h];
+            for (int i = 0; i < px.length; i++) {
+                int r = (px[i] >> 16) & 0xff, g = (px[i] >> 8) & 0xff, b = px[i] & 0xff;
+                gray[i] = 0.299f * r + 0.587f * g + 0.114f * b;
+            }
+            bmp.recycle();
+            if (small != bmp) small.recycle();
+            return gray;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static float meanAbsDiff(float[] a, float[] b) {
+        float sum = 0;
+        for (int i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+        return sum / a.length;
+    }
+
+    // ---------- Capture + ask ----------
+
+    private void fireCapture(final boolean isAuto) {
+        if (busy) return;
+        busy = true;
+        questionView.setText("");
+        if (!isAuto) answerView.setText("Capturing...");
+        CameraService.capture(this, new CameraService.Callback() {
+            @Override public void onJpeg(byte[] jpeg) {
+                saveLastCapture(jpeg);
+                answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
+                AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
+                    @Override public void onAnswer(String q, String a, String provider) {
+                        busy = false;
+                        boolean noText = a != null && a.startsWith("No handwriting");
+                        if (isAuto && noText) {
+                            statusView.append("\nauto: no text");
+                            return; // auto fires stay quiet on misses
+                        }
+                        if (q != null && !q.isEmpty()) questionView.setText("Q: " + q);
+                        answerView.setText(a);
+                        logEpisode(q, a, provider);
+                        speak(a);
+                    }
+                    @Override public void onError(String message) {
+                        busy = false;
+                        if (!isAuto) answerView.setText("ERROR: " + message);
+                    }
+                });
+            }
+            @Override public void onError(String message) {
+                busy = false;
+                answerView.setText("CAMERA ERROR: " + message);
+            }
+        }, 2600);
     }
 
     // ---------- Input ----------
@@ -185,7 +282,12 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            if (event.getRepeatCount() == 0) triggerCapture();
+            if (event.getRepeatCount() == 0) {
+                long now = System.currentTimeMillis();
+                if (now - lastTap < 400) return true;
+                lastTap = now;
+                fireCapture(false);
+            }
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
@@ -194,6 +296,18 @@ public class MainActivity extends Activity {
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
             scroller.smoothScrollBy(0, 160);
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            autoOn = !autoOn;
+            if (autoOn) {
+                motionRun = 0; stillRun = 0; prevFrame = null;
+                auto.removeCallbacks(tick);
+                auto.postDelayed(tick, SCAN_MS);
+            } else {
+                auto.removeCallbacks(tick);
+            }
+            statusView.append("\nauto " + (autoOn ? "ON" : "OFF"));
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -206,59 +320,19 @@ public class MainActivity extends Activity {
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            triggerCapture();
+            long now = System.currentTimeMillis();
+            if (now - lastTap < 400) return true;
+            lastTap = now;
+            fireCapture(false);
             return true;
         }
         return super.onTouchEvent(event);
     }
 
-    private void triggerCapture() {
-        long now = System.currentTimeMillis();
-        if (now - lastTap < 400) return; // debounce
-        lastTap = now;
-        doCapture();
-    }
+    // ---------- Support ----------
 
-    private void doCapture() {
-        if (busy) return;
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestCamera();
-            return;
-        }
-        busy = true;
-        questionView.setText("");
-        answerView.setText("Capturing...");
-        CameraService.capture(this, new CameraService.Callback() {
-            @Override public void onJpeg(byte[] jpeg) {
-                saveLastCapture(jpeg);
-                answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
-                AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
-                    @Override public void onAnswer(String q, String a, String provider) {
-                        busy = false;
-                        if (q != null && !q.isEmpty()) questionView.setText("Q: " + q);
-                        answerView.setText(a);
-                        logEpisode(q, a, provider);
-                        speak(a);
-                    }
-                    @Override public void onError(String message) {
-                        busy = false;
-                        answerView.setText("ERROR: " + message);
-                    }
-                });
-            }
-            @Override public void onError(String message) {
-                busy = false;
-                answerView.setText("CAMERA ERROR: " + message);
-            }
-        });
-    }
-
-    private void saveLastCapture(byte[] jpeg) {
-        try {
-            FileOutputStream fos = new FileOutputStream(new File(getFilesDir(), "last_capture.jpg"));
-            fos.write(jpeg);
-            fos.close();
-        } catch (Exception ignored) {}
+    private boolean hasCameraPermission() {
+        return checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void initTts() {
@@ -273,9 +347,17 @@ public class MainActivity extends Activity {
     }
 
     private void requestCamera() {
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasCameraPermission()) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, 10);
         }
+    }
+
+    private void saveLastCapture(byte[] jpeg) {
+        try {
+            FileOutputStream fos = new FileOutputStream(new File(getFilesDir(), "last_capture.jpg"));
+            fos.write(jpeg);
+            fos.close();
+        } catch (Exception ignored) {}
     }
 
     private void speak(String text) {
@@ -290,7 +372,7 @@ public class MainActivity extends Activity {
         try {
             File dir = new File(getFilesDir(), "episodes");
             dir.mkdirs();
-            String day = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+            String day = new SimpleDateFormat("yyyy-MM-DD", Locale.US).format(new Date()).replace("DD", "dd");
             File f = new File(dir, day + ".jsonl");
             String line = "{\"t\":" + System.currentTimeMillis()
                     + ",\"q\":" + jsonStr(q) + ",\"a\":" + jsonStr(a)
@@ -348,10 +430,10 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.1.4\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.2.0\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
-            + ",\"rotation\":" + rotation
+            + ",\"auto\":" + autoOn
             + ",\"deepinfra\":" + Prefs.has(this, Prefs.K_DEEPINFRA)
             + ",\"zai\":" + Prefs.has(this, Prefs.K_ZAI) + "}";
     }

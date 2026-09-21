@@ -72,6 +72,11 @@ public final class CameraService {
 
     /** Open camera, take one still JPEG, close. Callbacks arrive on the main thread. */
     public static void capture(final Context ctx, final Callback cb) {
+        capture(ctx, cb, 2600);
+    }
+
+    /** targetWidth picks capture resolution: 2600 = max (paper OCR), 640 = light scan frames. */
+    public static void capture(final Context ctx, final Callback cb, final int targetWidth) {
         final Handler ui = new Handler(ctx.getMainLooper());
         final String cameraId = pickCamera(ctx);
         if (cameraId == null) {
@@ -91,12 +96,13 @@ public final class CameraService {
             android.util.Size best = null;
             for (android.util.Size s : ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     .getOutputSizes(ImageFormat.JPEG)) {
-                // Prefer ~1280 width frames; fall back to the smallest available.
-                if (best == null || Math.abs(s.getWidth() - 1280) < Math.abs(best.getWidth() - 1280)) {
+                if (s.getWidth() > 3200) continue; // upload-size cap
+                if (best == null || Math.abs(s.getWidth() - targetWidth) < Math.abs(best.getWidth() - targetWidth)) {
                     best = s;
                 }
             }
             final android.util.Size size = best != null ? best : new android.util.Size(1280, 720);
+            final int exposureComp = exposureCompensation(ch);
 
             final ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.JPEG, 1);
             final boolean[] done = {false};
@@ -145,7 +151,13 @@ public final class CameraService {
                         req.addTarget(surface);
                         Integer af = ch.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) != null ? 1 : null;
                         req.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                        req.set(CaptureRequest.JPEG_QUALITY, (byte) 70);
+                        req.set(CaptureRequest.JPEG_QUALITY, (byte) 80);
+                        if (exposureComp != 0) {
+                            try { req.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposureComp); } catch (Exception ignored) {}
+                        }
+                        try { req.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY); } catch (Exception ignored) {}
+                        try { req.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY); } catch (Exception ignored) {}
+                        try { req.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO); } catch (Exception ignored) {}
 
                         camera.createCaptureSession(Collections.singletonList(surface),
                                 new CameraCaptureSession.StateCallback() {
@@ -182,6 +194,21 @@ public final class CameraService {
             thread.quitSafely();
             exec.shutdown();
             ui.post(() -> cb.onError("camera: " + e.getMessage()));
+        }
+    }
+
+    /** +2 EV exposure compensation clamped to the sensor's supported range (fixes dark captures). */
+    private static int exposureCompensation(CameraCharacteristics ch) {
+        try {
+            android.util.Range<Integer> range =
+                    ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+            android.util.Rational step =
+                    ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+            if (range == null || step == null || step.floatValue() <= 0f) return 0;
+            int steps = Math.round(2.0f / step.floatValue());
+            return Math.max(range.getLower(), Math.min(range.getUpper(), steps));
+        } catch (Exception e) {
+            return 0;
         }
     }
 
