@@ -23,7 +23,7 @@ public class SttLoop {
         void onTranscript(String text, String error);
     }
 
-    private static final int CHUNK_MS = 8000;
+    private static final int CHUNK_MS = 10000;
 
     private final Context ctx;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -32,6 +32,8 @@ public class SttLoop {
     private MediaRecorder recorder;
     private File chunkFile;
     private Callback cb;
+    private int chunkMaxAmp = 0;
+    private String lastTail = "";   // previous transcript tail = whisper anti-hallucination prompt
 
     public SttLoop(Context c) {
         ctx = c.getApplicationContext();
@@ -43,6 +45,7 @@ public class SttLoop {
     public void start() {
         if (running) return;
         running = true;
+        lastTail = "";
         Diag.log("stt: loop start");
         recordNext();
     }
@@ -74,11 +77,13 @@ public class SttLoop {
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            recorder.setAudioEncodingBitRate(32000);
+            recorder.setAudioEncodingBitRate(64000);
             recorder.setAudioSamplingRate(16000);
             recorder.setOutputFile(chunkFile.getAbsolutePath());
             recorder.prepare();
             recorder.start();
+            chunkMaxAmp = 0;
+            pollAmp();
             timer.postDelayed(this::finishChunk, CHUNK_MS);
         } catch (Exception e) {
             Diag.log("stt: recorder FAIL " + e.getMessage());
@@ -87,17 +92,33 @@ public class SttLoop {
         }
     }
 
+    private void pollAmp() {
+        if (!running || recorder == null) return;
+        try {
+            int a = recorder.getMaxAmplitude();
+            if (a > chunkMaxAmp) chunkMaxAmp = a;
+        } catch (Exception ignored) {}
+        timer.postDelayed(this::pollAmp, 400);
+    }
+
     private void finishChunk() {
         final byte[] bytes = stopRecorderAndGet();
-        if (bytes == null || bytes.length < 2500) {
-            // too short = no speech energy; skip upload
+        final int amp = chunkMaxAmp;
+        if (bytes == null || bytes.length < 2500 || amp < 350) {
+            // silence gate: quiet chunk = skip upload entirely
+            Diag.log("stt: skip quiet chunk amp=" + amp);
             recordNext();
             return;
         }
+        final String promptTail = lastTail;
         new Thread(() -> {
             try {
-                final String text = transcribe(bytes);
+                final String text = transcribe(bytes, promptTail);
+                if (text != null && !text.isEmpty()) {
+                    lastTail = text.length() > 200 ? text.substring(text.length() - 200) : text;
+                }
                 if (cb != null) ui.post(() -> cb.onTranscript(text, null));
+                Diag.log("stt: amp=" + amp);
             } catch (Exception e) {
                 Diag.log("stt: upload FAIL " + e.getMessage());
                 if (cb != null) ui.post(() -> cb.onTranscript(null, e.getMessage()));
@@ -128,7 +149,7 @@ public class SttLoop {
         return null;
     }
 
-    private String transcribe(byte[] audio) throws Exception {
+    private String transcribe(byte[] audio, String promptTail) throws Exception {
         String key = Prefs.get(ctx, Prefs.K_DEEPINFRA);
         if (key.length() < 8) throw new Exception("no deepinfra key");
         String boundary = "----sidekick" + System.currentTimeMillis();
@@ -143,6 +164,9 @@ public class SttLoop {
 
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeField(body, boundary, "model", "openai/whisper-large-v3-turbo");
+        if (promptTail != null && !promptTail.isEmpty()) {
+            writeField(body, boundary, "prompt", promptTail);
+        }
         writeFile(body, boundary, "file", "chunk.m4a", "audio/mp4", audio);
         body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
 
