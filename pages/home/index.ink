@@ -4,13 +4,13 @@ export default {
     phase: 'Phase 1 — capability probe',
     battery: '--',
     tests: [
-      { id: 'storage', name: 'localStorage', state: 'wait', detail: '' },
-      { id: 'opfs', name: 'OPFS file system', state: 'wait', detail: '' },
-      { id: 'battery', name: 'Battery API', state: 'wait', detail: '' },
-      { id: 'camera', name: 'Camera + ImageCapture', state: 'wait', detail: '' },
-      { id: 'stt', name: 'Speech Recognition', state: 'wait', detail: '' },
-      { id: 'barcode', name: 'BarcodeDetector', state: 'wait', detail: '' },
-      { id: 'network', name: 'Network (DeepInfra)', state: 'wait', detail: '' },
+      { id: 'storage', name: 'localStorage', state: 'wait', detail: '', cls: 'g-faint' },
+      { id: 'opfs', name: 'OPFS file system', state: 'wait', detail: '', cls: 'g-faint' },
+      { id: 'battery', name: 'Battery API', state: 'wait', detail: '', cls: 'g-faint' },
+      { id: 'camera', name: 'Camera + ImageCapture', state: 'wait', detail: '', cls: 'g-faint' },
+      { id: 'stt', name: 'Speech Recognition', state: 'wait', detail: '', cls: 'g-faint' },
+      { id: 'barcode', name: 'BarcodeDetector', state: 'wait', detail: '', cls: 'g-faint' },
+      { id: 'network', name: 'Network (DeepInfra)', state: 'wait', detail: '', cls: 'g-faint' },
     ],
     running: false,
   },
@@ -20,8 +20,9 @@ export default {
   },
 
   setResult(id, state, detail) {
+    const cls = state === 'ok' ? 'g-ok' : state === 'fail' ? 'g-mid' : 'g-faint';
     const tests = this.data.tests.map((t) =>
-      t.id === id ? { ...t, state, detail: detail || '' } : t
+      t.id === id ? { ...t, state, detail: detail || '', cls } : t
     );
     this.setData({ tests });
   },
@@ -163,12 +164,12 @@ export default {
       <text class="{{running ? 'g-dim' : 'g-ok'}}">{{running ? 'Testing...' : 'Tap to re-run all tests'}}</text>
     </view>
 
-    <view class="card" wx:for="{{tests}}" wx:for-item="t" wx:key="id">
+    <view class="card" wx:for="{{tests}}" wx:key="id">
       <view class="row">
-        <text class="g-ok">{{t.name}}</text>
-        <text class="{{t.state === 'ok' ? 'g-ok' : (t.state === 'fail' ? 'g-mid' : 'g-faint')}}">{{t.state}}</text>
+        <text class="g-ok">{{item.name}}</text>
+        <text class="{{item.cls}}">{{item.state}}</text>
       </view>
-      <text class="g-dim small" wx:if="{{t.detail}}">{{t.detail}}</text>
+      <text class="g-dim small">{{item.detail}}</text>
     </view>
   </scroll-view>
 </page>
