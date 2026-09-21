@@ -103,21 +103,51 @@ public final class CameraService {
         capture(ctx, cb, 2600);
     }
 
-    /** targetWidth: 2600 = max (paper OCR), 640 = light scan frames. Auto-retries minimal on failure. */
-    public static void capture(final Context ctx, final Callback cb, final int targetWidth) {
+    /** Full capture for paper OCR: walks the config ladder until the sensor delivers. */
+    public static void capture(final Context ctx, final Callback cb) {
+        walkLadder(ctx, cb, new int[]{0, 1, 2, 3, 4}, 0);
+    }
+
+    /** Scan capture for motion detection: bare configs only. */
+    public static void captureScan(final Context ctx, final Callback cb) {
+        walkLadder(ctx, cb, new int[]{3, 4}, 0);
+    }
+
+    private static void walkLadder(final Context ctx, final Callback cb, final int[] stages, final int idx) {
+        if (idx >= stages.length) { cb.onError("all ladder stages failed"); return; }
+        final int stage = stages[idx];
         captureInternal(ctx, new Callback() {
-            boolean retried = false;
             @Override public void onJpeg(byte[] jpeg) { cb.onJpeg(jpeg); }
             @Override public void onError(String message) {
-                if (!retried) {
-                    retried = true;
-                    Diag.log("cam: FAILED (" + message + ") -> retrying minimal config");
-                    captureInternal(ctx, cb, targetWidth, true);
-                } else {
-                    cb.onError(message);
-                }
+                Diag.log("cam: stage " + stage + " FAILED (" + message + ")");
+                walkLadder(ctx, cb, stages, idx + 1);
             }
-        }, targetWidth, false);
+        }, stage);
+    }
+
+    /** Software brightness boost (gamma-style gain) for dark captures - no driver risk. */
+    public static byte[] boostBrightness(byte[] jpeg, float gain) {
+        try {
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+            if (bmp == null) return jpeg;
+            android.graphics.ColorMatrix cm = new android.graphics.ColorMatrix();
+            cm.setScale(gain, gain, gain, 1f);
+            android.graphics.Bitmap out = android.graphics.Bitmap.createBitmap(bmp.getWidth(), bmp.getHeight(), android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(out);
+            android.graphics.Paint paint = new android.graphics.Paint();
+            paint.setColorFilter(new android.graphics.ColorMatrixColorFilter(cm));
+            canvas.drawBitmap(bmp, 0, 0, paint);
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, bos);
+            bmp.recycle();
+            out.recycle();
+            byte[] boosted = bos.toByteArray();
+            Diag.log("cam: brightness x" + gain + " " + (jpeg.length / 1024) + "KB->" + (boosted.length / 1024) + "KB");
+            return boosted;
+        } catch (Exception e) {
+            Diag.log("cam: boost skipped " + e.getMessage());
+            return jpeg;
+        }
     }
 
     private static android.util.Size[] jpegSizes(CameraCharacteristics ch) {
@@ -147,10 +177,13 @@ public final class CameraService {
         return best != null ? best : smallest;
     }
 
-    private static void captureInternal(final Context ctx, final Callback cb, final int targetWidth, final boolean minimal) {
+    /** Stages: 0=1920+AE12, 1=1920+AE4, 2=1920 bare, 3=640 bare, 4=smallest. */
+    private static void captureInternal(final Context ctx, final Callback cb, final int stage) {
         final Handler ui = new Handler(ctx.getMainLooper());
         final String cameraId = pickCamera(ctx);
         if (cameraId == null) { ui.post(() -> cb.onError("no camera found")); return; }
+        final int targetWidth = stage <= 2 ? 1920 : 640;
+        final boolean minimal = stage == 4;
 
         HandlerThread thread = new HandlerThread("sidekick-cam");
         thread.start();
@@ -162,7 +195,7 @@ public final class CameraService {
             final CameraCharacteristics ch = cm.getCameraCharacteristics(cameraId);
             final android.util.Size size = chooseSize(ch, targetWidth, minimal);
             Diag.log("cam: opening #" + cameraId + " @" + size.getWidth() + "x" + size.getHeight()
-                    + (minimal ? " (minimal retry)" : " target" + targetWidth));
+                    + " stage" + stage);
 
             final ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.JPEG, 1);
             final boolean[] done = {false};
@@ -204,7 +237,7 @@ public final class CameraService {
                     Diag.log("cam: TIMEOUT @" + size.getWidth() + "x" + size.getHeight());
                     ui.post(() -> cb.onError("timeout @" + size.getWidth() + "x" + size.getHeight()));
                 }
-            }, 9000);
+            }, stage <= 2 ? 12000 : 8000);
 
             cm.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(final CameraDevice camera) {
@@ -212,8 +245,8 @@ public final class CameraService {
                         Surface surface = reader.getSurface();
                         final CaptureRequest.Builder req = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                         req.addTarget(surface);
-                        req.set(CaptureRequest.JPEG_QUALITY, (byte) (minimal ? 70 : 80));
-                        applySafeKeys(req, ch, minimal);
+                        req.set(CaptureRequest.JPEG_QUALITY, (byte) (stage >= 3 ? 75 : 82));
+                        applyStageKeys(req, ch, stage);
 
                         camera.createCaptureSession(Collections.singletonList(surface),
                                 new CameraCaptureSession.StateCallback() {
@@ -257,19 +290,18 @@ public final class CameraService {
         }
     }
 
-    /** Apply enhancement keys ONLY when the sensor verifiably supports them. */
-    private static void applySafeKeys(CaptureRequest.Builder req, CameraCharacteristics ch, boolean minimal) {
-        // Auto-exposure with +2EV compensation, clamped to the real supported range.
+    /** Stage-based keys: AE compensation only on stages 0/1; FAST processing modes everywhere. */
+    private static void applyStageKeys(CaptureRequest.Builder req, CameraCharacteristics ch, int stage) {
         try {
             android.util.Range<Integer> range = ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
             android.util.Rational step = ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
-            if (!minimal && range != null && step != null && step.floatValue() > 0f && range.getUpper() > 0) {
-                int steps = Math.round(2.0f / step.floatValue());
+            if ((stage == 0 || stage == 1) && range != null && step != null && step.floatValue() > 0f && range.getUpper() > 0) {
+                float ev = stage == 0 ? 2.0f : 0.67f;
+                int steps = Math.round(ev / step.floatValue());
                 steps = Math.max(range.getLower(), Math.min(range.getUpper(), steps));
                 req.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, steps);
             }
         } catch (Exception ignored) {}
-        // Autofocus: continuous only if listed as supported.
         try {
             int[] afModes = ch.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
             boolean hasCAF = false;
@@ -277,20 +309,13 @@ public final class CameraService {
             req.set(CaptureRequest.CONTROL_AF_MODE,
                     hasCAF ? CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE : CaptureRequest.CONTROL_AF_MODE_OFF);
         } catch (Exception ignored) {}
-        // Noise reduction + edge enhancement: HIGH_QUALITY only when advertised.
-        try {
-            int[] nr = ch.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES);
-            boolean hq = false;
-            if (nr != null) for (int m : nr) if (m == CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY) hq = true;
-            req.set(CaptureRequest.NOISE_REDUCTION_MODE,
-                    hq ? CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY : CaptureRequest.NOISE_REDUCTION_MODE_FAST);
-        } catch (Exception ignored) {}
-        try {
-            int[] em = ch.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES);
-            boolean hq = false;
-            if (em != null) for (int m : em) if (m == CaptureRequest.EDGE_MODE_HIGH_QUALITY) hq = true;
-            req.set(CaptureRequest.EDGE_MODE, hq ? CaptureRequest.EDGE_MODE_HIGH_QUALITY : CaptureRequest.EDGE_MODE_FAST);
-        } catch (Exception ignored) {}
+        try { req.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST); } catch (Exception ignored) {}
+        try { req.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_FAST); } catch (Exception ignored) {}
+    }
+
+    @SuppressWarnings("unused")
+    private static void applySafeKeys(CaptureRequest.Builder req, CameraCharacteristics ch, boolean minimal) {
+        applyStageKeys(req, ch, minimal ? 4 : 0);
     }
 
     public static String toDataUrl(byte[] jpeg) {

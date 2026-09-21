@@ -169,7 +169,7 @@ public class MainActivity extends Activity {
         if (!autoOn) return;
         if (!busy && !scanning && hasCameraPermission()) {
             scanning = true;
-            CameraService.capture(this, new CameraService.Callback() {
+            CameraService.captureScan(this, new CameraService.Callback() {
                 @Override public void onJpeg(byte[] jpeg) {
                     scanning = false;
                     float[] frame = decodeSmall(jpeg);
@@ -194,7 +194,7 @@ public class MainActivity extends Activity {
                     Diag.log("scan: CAPTURE FAIL " + message);
                     statusView.append("\nscan err: " + message);
                 }
-            }, 640);
+            });
         }
         auto.postDelayed(tick, SCAN_MS);
     }
@@ -259,6 +259,7 @@ public class MainActivity extends Activity {
         if (!isAuto) answerView.setText("Capturing...");
         CameraService.capture(this, new CameraService.Callback() {
             @Override public void onJpeg(byte[] jpeg) {
+                jpeg = CameraService.boostBrightness(jpeg, 1.7f);
                 saveLastCapture(jpeg);
                 answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
                 AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
@@ -442,7 +443,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.2.0\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.2.2\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
