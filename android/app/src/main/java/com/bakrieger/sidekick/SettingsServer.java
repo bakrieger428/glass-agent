@@ -175,7 +175,7 @@ public final class SettingsServer {
             + "<p><button onclick=\"document.getElementById('ph').src='/photo?'+Date.now()\">Refresh photo</button>"
             + " <small>Tap capture on the glasses, then refresh here to see what the AI sees.</small></p>"
             + "<hr style='border-color:#060;margin:20px 0'><h2>Listen mode (fact-checker)</h2>"
-            + "<button onclick=\\"fetch('/listen').then(r=>r.text()).then(t=>{document.getElementById('lout').textContent=t;setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('lout').textContent='listen='+s.listen),400)})\\">Toggle listen on/off</button>"
+            + "<button onclick=\"fetch('/listen').then(r=>r.text()).then(t=>{document.getElementById('lout').textContent=t;setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('lout').textContent='listen='+s.listen),400)})\">Toggle listen on/off</button>"
             + "<pre id='lout'></pre>"
             + "<hr style='border-color:#060;margin:20px 0'><h2>Diagnostics log</h2>"
             + "<button onclick=\"fetch('/diag').then(r=>r.text()).then(t=>document.getElementById('diag').textContent=t)\">Load diagnostics</button>"
