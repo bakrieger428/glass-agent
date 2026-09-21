@@ -11,6 +11,8 @@ import android.graphics.Typeface;
 import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -29,24 +31,36 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * Sidekick v0.1.0 — HUD (monochrome green), temple-tap PaperChat.
- * Tap (touchpad center or screen) = capture photo of handwriting + answer.
- * Settings/keys: open http://<glasses-ip>:8080 in Safari on the iPhone.
+ * Sidekick v0.1.3 — HUD (monochrome green), temple-tap PaperChat.
+ * Tap = capture handwritten question + answer.
+ * LONG-PRESS (0.8s) = cycle display rotation 0/90/180/270 (persisted).
+ * Settings/keys: http://<glasses-ip>:8080 in Safari on the iPhone.
  */
 public class MainActivity extends Activity {
 
     private static final int GREEN = Color.parseColor("#00FF46");
     private static final int GREEN_MID = Color.parseColor("#00A62E");
     private static final int GREEN_DIM = Color.parseColor("#006619");
+    private static final String K_ROT = "ui.rotation";
 
     private TextView statusView;
     private TextView questionView;
     private TextView answerView;
     private ScrollView scroller;
+    private LinearLayout root;
     private TextToSpeech tts;
     private boolean ttsReady = false;
     private boolean busy = false;
     private long lastTap = 0;
+
+    // long-press state
+    private final Handler h = new Handler(Looper.getMainLooper());
+    private boolean armed = false;      // long-press fired -> rotation cycled
+    private boolean waiting = false;    // waiting to see if press becomes long
+    private final Runnable longPress = this::onLongPress;
+    private final Runnable pendingCapture = this::doCapture;
+
+    private int rotation = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,7 +70,7 @@ public class MainActivity extends Activity {
         buildUi();
         initTts();
         requestCamera();
-        updateStatus("booting");
+        rotation = Prefs.getInt(this, K_ROT, 0);
         SettingsServer server = new SettingsServer(this, this::statusJson);
         boolean httpUp = server.start();
         final StringBuilder sb = new StringBuilder();
@@ -65,12 +79,15 @@ public class MainActivity extends Activity {
           .append("wifi ").append(wifiIp() != null ? wifiIp() : "not connected").append('\n')
           .append("net ").append(AiRouter.probe(this)).append('\n')
           .append("cam ").append(CameraService.pickCamera(this) != null ? "found" : "NONE").append('\n')
+          .append("rot ").append(rotation).append('\n')
           .append("tts ").append("checking");
         statusView.setText(sb.toString());
+        // apply rotation after first layout
+        root.post(() -> applyRotation());
     }
 
     private void buildUi() {
-        LinearLayout root = new LinearLayout(this);
+        root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
         root.setPadding(28, 20, 28, 20);
@@ -100,7 +117,7 @@ public class MainActivity extends Activity {
         answerView.setLineSpacing(4, 1);
 
         TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: look at handwritten question, then tap\n\u25B2\u25BC SWIPE: scroll answer");
+        hint.setText("\u25B6 TAP: capture handwritten question\n\u25B2\u25BC SWIPE: scroll  ·  HOLD: rotate view");
         hint.setTextColor(GREEN_DIM);
         hint.setTypeface(Typeface.MONOSPACE);
         hint.setTextSize(12);
@@ -124,33 +141,66 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
-    private void initTts() {
-        try {
-            tts = new TextToSpeech(this, status -> {
-                ttsReady = status == TextToSpeech.SUCCESS;
-                runOnUiThread(() -> statusView.append("\ntts " + (ttsReady ? "ready" : "unavailable")));
-            });
-        } catch (Exception e) {
-            ttsReady = false;
+    // ---------- Rotation (glasses panels mount in different orientations) ----------
+
+    private void applyRotation() {
+        View decor = getWindow().getDecorView();
+        int w = decor.getWidth();
+        int hgt = decor.getHeight();
+        if (w <= 0 || hgt <= 0) return;
+        ViewGroup.LayoutParams lp = root.getLayoutParams();
+        if (rotation == 90 || rotation == 270) {
+            lp.width = hgt;
+            lp.height = w;
+        } else {
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        }
+        root.setLayoutParams(lp);
+        root.setPivotX(0f);
+        root.setPivotY(0f);
+        switch (rotation) {
+            case 90:
+                root.setRotation(90);
+                root.setTranslationX(w);
+                root.setTranslationY(0);
+                break;
+            case 180:
+                root.setRotation(180);
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                root.setLayoutParams(lp);
+                root.setTranslationX(w);
+                root.setTranslationY(hgt);
+                break;
+            case 270:
+                root.setRotation(270);
+                root.setTranslationX(0);
+                root.setTranslationY(hgt);
+                break;
+            default:
+                root.setRotation(0);
+                root.setTranslationX(0);
+                root.setTranslationY(0);
+                break;
         }
     }
 
-    private void requestCamera() {
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.CAMERA}, 10);
-        }
+    private void onLongPress() {
+        armed = true;
+        waiting = false;
+        rotation = (rotation + 90) % 360;
+        Prefs.setInt(this, K_ROT, rotation);
+        applyRotation();
+        answerView.setText("rotation " + rotation + "\u00B0 (saved)");
     }
 
-    private void updateStatus(String s) {
-        statusView.append("\n" + s);
-    }
-
-    // ---------- Input: temple/touchpad tap = capture; swipes scroll ----------
+    // ---------- Input ----------
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            triggerCapture();
+            if (event.getRepeatCount() == 0) startPressWatch();
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
@@ -169,18 +219,53 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+            endPressWatch();
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
+    }
+
+    @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            triggerCapture();
+            startPressWatch();
+            return true;
+        }
+        if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+            endPressWatch();
             return true;
         }
         return super.onTouchEvent(event);
     }
 
+    /** Press started: wait 800ms -> long-press (rotate); release before -> tap (capture). */
+    private void startPressWatch() {
+        armed = false;
+        waiting = true;
+        h.postDelayed(longPress, 800);
+    }
+
+    private void endPressWatch() {
+        if (waiting) {
+            h.removeCallbacks(longPress);
+            waiting = false;
+            triggerCapture();
+        } else if (!armed) {
+            triggerCapture();
+        }
+        armed = false;
+    }
+
     private void triggerCapture() {
         long now = System.currentTimeMillis();
-        if (now - lastTap < 900) return; // debounce
+        if (now - lastTap < 400) return; // debounce
         lastTap = now;
+        doCapture();
+    }
+
+    private void doCapture() {
         if (busy) return;
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestCamera();
@@ -213,13 +298,30 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void initTts() {
+        try {
+            tts = new TextToSpeech(this, status -> {
+                ttsReady = status == TextToSpeech.SUCCESS;
+                runOnUiThread(() -> statusView.append("\ntts " + (ttsReady ? "ready" : "unavailable")));
+            });
+        } catch (Exception e) {
+            ttsReady = false;
+        }
+    }
+
+    private void requestCamera() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, 10);
+        }
+    }
+
     private void speak(String text) {
         if (ttsReady && tts != null && text != null && !text.isEmpty()) {
             try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sidekick-answer"); } catch (Exception ignored) {}
         }
     }
 
-    // ---------- Minimal episode log (GlassMemory seed) ----------
+    // ---------- Episode log (GlassMemory seed) ----------
 
     private void logEpisode(String q, String a, String provider) {
         try {
@@ -283,9 +385,10 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.1.0\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.1.3\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
+            + ",\"rotation\":" + rotation
             + ",\"deepinfra\":" + Prefs.has(this, Prefs.K_DEEPINFRA)
             + ",\"zai\":" + Prefs.has(this, Prefs.K_ZAI) + "}";
     }

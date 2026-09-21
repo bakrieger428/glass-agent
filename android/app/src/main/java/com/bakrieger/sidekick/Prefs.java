@@ -29,4 +29,12 @@ public final class Prefs {
         String v = get(c, key);
         return v != null && v.length() > 8;
     }
+
+    public static int getInt(Context c, String key, int def) {
+        return sp(c).getInt(key, def);
+    }
+
+    public static void setInt(Context c, String key, int value) {
+        sp(c).edit().putInt(key, value).apply();
+    }
 }
