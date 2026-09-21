@@ -300,15 +300,27 @@ public class MainActivity extends Activity {
     private void captureWithExposure(final boolean isAuto, final int exposurePass) {
         CameraService.captureVariant(this, new CameraService.Callback() {
             @Override public void onJpeg(byte[] jpeg) {
-                float mean = CameraService.measureMean(jpeg);
-                Diag.log("cam: exposure pass" + exposurePass + " mean=" + Math.round(mean));
-                if (exposurePass == 0 && mean > 235f) {
+                float[] st = CameraService.measureStats(jpeg);
+                float mean = st != null ? st[0] : 128f;
+                float clip = st != null ? st[1] : 0f;
+                float darkPct = st != null ? st[2] : 0f;
+                Diag.log("cam: exposure pass" + exposurePass + " mean=" + Math.round(mean)
+                        + " clip=" + Math.round(clip) + "% dark=" + Math.round(darkPct) + "%");
+                boolean blown = clip > 10f || mean > 235f;
+                boolean tooDark = mean < 45f || darkPct > 60f;
+                if (exposurePass == 0 && blown) {
                     Diag.log("cam: blown -> retry -1EV");
                     if (!isAuto) answerView.setText("Adjusting exposure...");
                     captureWithExposure(isAuto, 2);
                     return;
                 }
-                if (exposurePass == 0 && mean >= 0f && mean < 45f) {
+                if (exposurePass == 2 && blown) {
+                    Diag.log("cam: still blown -> retry -2EV");
+                    if (!isAuto) answerView.setText("Adjusting exposure...");
+                    captureWithExposure(isAuto, 3);
+                    return;
+                }
+                if (exposurePass == 0 && tooDark) {
                     Diag.log("cam: dark -> retry +2EV");
                     if (!isAuto) answerView.setText("Adjusting exposure...");
                     captureWithExposure(isAuto, 1);
@@ -599,7 +611,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.3.3\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.3.4\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn

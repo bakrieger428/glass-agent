@@ -98,10 +98,11 @@ public final class CameraService {
         }
     }
 
-    /** Full capture, exposure-aware: mode 0 = bare, 1 = dark scene (+EV ladder), 2 = blown scene (-EV ladder). */
+    /** Exposure modes: 0 = bare, 1 = dark (+EV), 2 = blown (-1EV), 3 = very blown (-2EV). */
     public static void captureVariant(final Context ctx, final Callback cb, final int mode) {
         if (mode == 1) walkLadder(ctx, cb, new int[]{0, 1, 3, 4}, 0);
-        else if (mode == 2) walkLadder(ctx, cb, new int[]{5, 2, 3, 4}, 0);
+        else if (mode == 2) walkLadder(ctx, cb, new int[]{5, 3, 4}, 0);
+        else if (mode == 3) walkLadder(ctx, cb, new int[]{6, 3, 4}, 0);
         else walkLadder(ctx, cb, new int[]{2, 3, 4}, 0);
     }
 
@@ -122,28 +123,31 @@ public final class CameraService {
         }, stage);
     }
 
-    /** Measure mean luminance 0-255 of a JPEG (-1 if undecodable). */
-    public static float measureMean(byte[] jpeg) {
+    /** Stats of a JPEG: [mean 0-255, clipPct >250, darkPct <40]. Returns null if undecodable. */
+    public static float[] measureStats(byte[] jpeg) {
         android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
-        if (bmp == null) return -1f;
-        float m = sampleMean(bmp);
+        if (bmp == null) return null;
+        float[] s = sampleStats(bmp);
         bmp.recycle();
-        return m;
+        return s;
     }
 
-    private static float sampleMean(android.graphics.Bitmap bmp) {
-        long sum = 0; int n = 0;
+    private static float[] sampleStats(android.graphics.Bitmap bmp) {
+        long sum = 0; int n = 0, clip = 0, dark = 0;
         int w = bmp.getWidth(), h = bmp.getHeight();
         int stepX = Math.max(1, w / 32), stepY = Math.max(1, h / 24);
         for (int y = 0; y < h; y += stepY) {
             for (int x = 0; x < w; x += stepX) {
                 int p = bmp.getPixel(x, y);
                 int r = (p >> 16) & 0xff, g = (p >> 8) & 0xff, b = p & 0xff;
-                sum += (r * 299 + g * 587 + b * 114) / 1000;
+                int lum = (r * 299 + g * 587 + b * 114) / 1000;
+                sum += lum;
+                if (lum > 250) clip++;
+                if (lum < 40) dark++;
                 n++;
             }
         }
-        return n > 0 ? sum / (float) n : 128f;
+        return n > 0 ? new float[]{sum / (float) n, clip * 100f / n, dark * 100f / n} : new float[]{128f, 0f, 0f};
     }
 
     /** Adaptive brightness: measures mean luminance, boosts only dark captures toward ~115/255. */
@@ -151,7 +155,7 @@ public final class CameraService {
         try {
             android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
             if (bmp == null) return jpeg;
-            float mean = sampleMean(bmp);
+            float mean = sampleStats(bmp)[0];
             float gain = 1.0f;
             if (mean < 95f) gain = Math.min(maxGain, 115f / Math.max(1f, mean));
             Diag.log("cam: brightness mean=" + Math.round(mean) + " gain=x" + String.format(java.util.Locale.US, "%.2f", gain));
@@ -207,7 +211,7 @@ public final class CameraService {
         final Handler ui = new Handler(ctx.getMainLooper());
         final String cameraId = pickCamera(ctx);
         if (cameraId == null) { ui.post(() -> cb.onError("no camera found")); return; }
-        final int targetWidth = (stage <= 2 || stage == 5) ? 1920 : 640;
+        final int targetWidth = (stage <= 2 || stage == 5 || stage == 6) ? 1920 : 640;
         final boolean minimal = stage == 4;
 
         HandlerThread thread = new HandlerThread("sidekick-cam");
@@ -262,7 +266,7 @@ public final class CameraService {
                     Diag.log("cam: TIMEOUT @" + size.getWidth() + "x" + size.getHeight());
                     ui.post(() -> cb.onError("timeout @" + size.getWidth() + "x" + size.getHeight()));
                 }
-            }, (stage <= 2 || stage == 5) ? 12000 : 8000);
+            }, (stage <= 2 || stage == 5 || stage == 6) ? 12000 : 8000);
 
             cm.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(final CameraDevice camera) {
@@ -320,8 +324,8 @@ public final class CameraService {
         try {
             android.util.Range<Integer> range = ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
             android.util.Rational step = ch.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
-            if ((stage == 0 || stage == 1 || stage == 5) && range != null && step != null && step.floatValue() > 0f && (range.getUpper() > 0 || range.getLower() < 0)) {
-                float ev = stage == 0 ? 2.0f : stage == 1 ? 0.67f : -1.0f;
+            if ((stage == 0 || stage == 1 || stage == 5 || stage == 6) && range != null && step != null && step.floatValue() > 0f && (range.getUpper() > 0 || range.getLower() < 0)) {
+                float ev = stage == 0 ? 2.0f : stage == 1 ? 0.67f : stage == 5 ? -1.0f : -2.0f;
                 int steps = Math.round(ev / step.floatValue());
                 steps = Math.max(range.getLower(), Math.min(range.getUpper(), steps));
                 req.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, steps);
