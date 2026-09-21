@@ -81,6 +81,7 @@ public class MainActivity extends Activity {
     private final StringBuilder transcriptBuf = new StringBuilder();
     private int wordsSinceCheck = 0;
     private TextView liveView;
+    private TextView modeView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -105,6 +106,7 @@ public class MainActivity extends Activity {
             if (!line.trim().isEmpty()) Diag.log(line);
         }
         Diag.log("boot: ui up, auto=" + autoOn);
+        updateModeLine();
     }
 
     @Override
@@ -164,7 +166,7 @@ public class MainActivity extends Activity {
         answerView.setLineSpacing(4, 1);
 
         TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: capture  \u25C0: auto  \u25B6: listen\n\u25B2\u25BC SWIPE: scroll");
+        hint.setText("\u25B6 TAP: capture  \u25B2\u25BC\u25C0\u25B6: scroll\nmodes: phone page :8080");
         hint.setTextColor(GREEN_DIM);
         hint.setTypeface(Typeface.MONOSPACE);
         hint.setTextSize(11);
@@ -183,6 +185,12 @@ public class MainActivity extends Activity {
 
         root.addView(title);
         root.addView(statusView);
+        modeView = new TextView(this);
+        modeView.setTextColor(GREEN);
+        modeView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        modeView.setTextSize(14);
+        modeView.setPadding(0, 6, 0, 10);
+        root.addView(modeView);
         root.addView(scroller, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         root.addView(hint);
@@ -217,7 +225,6 @@ public class MainActivity extends Activity {
                 @Override public void onError(String message) {
                     scanning = false;
                     Diag.log("scan: CAPTURE FAIL " + message);
-                    statusView.append("\nscan err: " + message);
                 }
             });
         }
@@ -296,7 +303,7 @@ public class MainActivity extends Activity {
                         Diag.log("ai: answered via " + provider + " len=" + (a == null ? 0 : a.length()));
                         boolean noText = a != null && a.startsWith("No handwriting");
                         if (isAuto && noText) {
-                            statusView.append("\nauto: no text");
+                            Diag.log("auto: no text (quiet)");
                             return; // auto fires stay quiet on misses
                         }
                         if (q != null && !q.isEmpty()) questionView.setText("Q: " + q);
@@ -339,20 +346,8 @@ public class MainActivity extends Activity {
             scroller.smoothScrollBy(0, 160);
             return true;
         }
-        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            toggleListen();
-            return true;
-        }
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-            autoOn = !autoOn;
-            if (autoOn) {
-                motionRun = 0; stillRun = 0; prevFrame = null;
-                auto.removeCallbacks(tick);
-                auto.postDelayed(tick, SCAN_MS);
-            } else {
-                auto.removeCallbacks(tick);
-            }
-            statusView.append("\nauto " + (autoOn ? "ON" : "OFF"));
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            scroller.smoothScrollBy(0, keyCode == KeyEvent.KEYCODE_DPAD_LEFT ? -320 : 320);
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -378,6 +373,25 @@ public class MainActivity extends Activity {
 
     // ---------- Listen mode (conversation fact-checker) ----------
 
+    public void toggleAuto() {
+        autoOn = !autoOn;
+        if (autoOn) {
+            motionRun = 0; stillRun = 0; prevFrame = null;
+            auto.removeCallbacks(tick);
+            auto.postDelayed(tick, SCAN_MS);
+        } else {
+            auto.removeCallbacks(tick);
+        }
+        updateModeLine();
+        Diag.log("auto " + (autoOn ? "ON" : "OFF"));
+    }
+
+    private void updateModeLine() {
+        modeView.setText("AUTO " + (autoOn ? "ON" : "OFF")
+                + "  \u00B7  LISTEN " + (listenOn ? "ON" : "OFF")
+                + "  \u00B7  " + batteryPct());
+    }
+
     public void toggleListen() {
         if (!listenOn) {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -397,11 +411,11 @@ public class MainActivity extends Activity {
             }
             listenOn = true;
             stt.start();
-            statusView.append("\nlisten ON");
+            updateModeLine();
         } else {
             listenOn = false;
             if (stt != null) stt.stop();
-            statusView.append("\nlisten OFF");
+            updateModeLine();
         }
     }
 
@@ -537,7 +551,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.3.1\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.3.2\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn

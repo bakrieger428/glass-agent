@@ -98,6 +98,14 @@ public final class SettingsServer {
                 respond(sock, "200", "text/plain",
                         "SAVED\n\nDeepInfra key: " + mask(di) + "\nz.ai key: " + mask(zai)
                         + "\n\nReturn to your glasses. You can close this page.");
+            } else if (path.startsWith("/auto")) {
+                final MainActivity act = MainActivity.instance;
+                if (act != null) {
+                    act.runOnUiThread(act::toggleAuto);
+                    respond(sock, "200", "text/plain", "toggled");
+                } else {
+                    respond(sock, "200", "text/plain", "app not running");
+                }
             } else if (path.startsWith("/listen")) {
                 final MainActivity act = MainActivity.instance;
                 if (act != null) {
@@ -174,9 +182,10 @@ public final class SettingsServer {
             + "<img id='ph' src='/photo' style='max-width:100%;border:1px solid #060'>"
             + "<p><button onclick=\"document.getElementById('ph').src='/photo?'+Date.now()\">Refresh photo</button>"
             + " <small>Tap capture on the glasses, then refresh here to see what the AI sees.</small></p>"
-            + "<hr style='border-color:#060;margin:20px 0'><h2>Listen mode (fact-checker)</h2>"
-            + "<button onclick=\"fetch('/listen').then(r=>r.text()).then(t=>{document.getElementById('lout').textContent=t;setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('lout').textContent='listen='+s.listen),400)})\">Toggle listen on/off</button>"
-            + "<pre id='lout'></pre>"
+            + "<hr style='border-color:#060;margin:20px 0'><h2>Modes</h2>"
+            + "<button onclick=\"fetch('/listen').then(()=>setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('mout').textContent='auto='+s.auto+' listen='+s.listen),400))\">Toggle listen</button>"
+            + " <button onclick=\"fetch('/auto').then(()=>setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('mout').textContent='auto='+s.auto+' listen='+s.listen),400))\">Toggle auto</button>"
+            + "<pre id='mout'>modes toggle here - state appears after tap</pre>"
             + "<hr style='border-color:#060;margin:20px 0'><h2>Diagnostics log</h2>"
             + "<button onclick=\"fetch('/diag').then(r=>r.text()).then(t=>document.getElementById('diag').textContent=t)\">Load diagnostics</button>"
             + "<pre id='diag' style='white-space:pre-wrap;font-size:11px'></pre>"
