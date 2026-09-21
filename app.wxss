@@ -1,0 +1,30 @@
+/* Sidekick global styles — monochrome green design tokens */
+page {
+  background-color: #000000;
+  color: rgba(0, 255, 70, 1);
+  font-size: 16px;
+}
+
+.g-ok { color: rgba(0, 255, 70, 1); }
+.g-mid { color: rgba(0, 255, 70, 0.65); }
+.g-dim { color: rgba(0, 255, 70, 0.40); }
+.g-faint { color: rgba(0, 255, 70, 0.25); }
+
+.card {
+  border: 1px solid rgba(0, 255, 70, 0.35);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  margin: 6px 0;
+}
