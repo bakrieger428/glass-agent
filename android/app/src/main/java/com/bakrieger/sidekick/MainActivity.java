@@ -72,9 +72,20 @@ public class MainActivity extends Activity {
     private long lastAutoFire = 0;
     private boolean scanning = false;
 
+    // web + listen mode
+    public static MainActivity instance;
+
+    // listen mode (fact-checker)
+    private SttLoop stt;
+    private boolean listenOn = false;
+    private final StringBuilder transcriptBuf = new StringBuilder();
+    private int wordsSinceCheck = 0;
+    private TextView liveView;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setBackgroundDrawableResource(android.R.color.black);
         buildUi();
@@ -106,6 +117,13 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         auto.removeCallbacks(tick);
+        if (listenOn) toggleListen();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        instance = null;
     }
 
     private void buildUi() {
@@ -126,6 +144,13 @@ public class MainActivity extends Activity {
         statusView.setTextSize(12);
         statusView.setLineSpacing(2, 1);
 
+        liveView = new TextView(this);
+        liveView.setTextColor(GREEN_MID);
+        liveView.setTypeface(Typeface.MONOSPACE);
+        liveView.setTextSize(13);
+        liveView.setLineSpacing(2, 1);
+        liveView.setPadding(0, 10, 0, 6);
+
         questionView = new TextView(this);
         questionView.setTextColor(GREEN_MID);
         questionView.setTypeface(Typeface.MONOSPACE);
@@ -139,7 +164,7 @@ public class MainActivity extends Activity {
         answerView.setLineSpacing(4, 1);
 
         TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: capture  \u25C0: auto on/off\n\u25B2\u25BC SWIPE: scroll  ·  AUTO: no tap needed");
+        hint.setText("\u25B6 TAP: capture  \u25C0: auto  \u25B6: listen\n\u25B2\u25BC SWIPE: scroll");
         hint.setTextColor(GREEN_DIM);
         hint.setTypeface(Typeface.MONOSPACE);
         hint.setTextSize(11);
@@ -150,6 +175,7 @@ public class MainActivity extends Activity {
         scroller.setFillViewport(true);
         LinearLayout inner = new LinearLayout(this);
         inner.setOrientation(LinearLayout.VERTICAL);
+        inner.addView(liveView);
         inner.addView(questionView);
         inner.addView(answerView);
         scroller.addView(inner, new ViewGroup.LayoutParams(
@@ -313,7 +339,11 @@ public class MainActivity extends Activity {
             scroller.smoothScrollBy(0, 160);
             return true;
         }
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            toggleListen();
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
             autoOn = !autoOn;
             if (autoOn) {
                 motionRun = 0; stillRun = 0; prevFrame = null;
@@ -345,6 +375,68 @@ public class MainActivity extends Activity {
     }
 
     // ---------- Support ----------
+
+    // ---------- Listen mode (conversation fact-checker) ----------
+
+    private void toggleListen() {
+        if (!listenOn) {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 11);
+                return;
+            }
+            try {
+                int pct = Integer.parseInt(batteryPct().replace("%", ""));
+                if (pct <= 15) {
+                    statusView.append("\nlisten: battery too low");
+                    return;
+                }
+            } catch (Exception ignored) {}
+            if (stt == null) {
+                stt = new SttLoop(this);
+                stt.setCallback(this::onTranscript);
+            }
+            listenOn = true;
+            stt.start();
+            statusView.append("\nlisten ON");
+        } else {
+            listenOn = false;
+            if (stt != null) stt.stop();
+            statusView.append("\nlisten OFF");
+        }
+    }
+
+    private void onTranscript(String text, String error) {
+        if (error != null) { Diag.log("stt: cb err " + error); return; }
+        if (text == null || text.isEmpty()) return;
+        Diag.log("stt: \"" + (text.length() > 60 ? text.substring(0, 60) + "..." : text) + "\"");
+        transcriptBuf.append(text.trim()).append(' ');
+        if (transcriptBuf.length() > 1500) transcriptBuf.delete(0, transcriptBuf.length() - 1500);
+        int words = text.trim().split("\\s+").length;
+        wordsSinceCheck += words;
+        if (wordsSinceCheck >= 30) {
+            wordsSinceCheck = 0;
+            final String recent = transcriptBuf.toString();
+            AiRouter.factCheck(this, recent, result -> {
+                if (result == null || result.contains("NO_FLAG")) return;
+                showFlag(result);
+            });
+        }
+    }
+
+    private void showFlag(String flags) {
+        String cur = liveView.getText().toString();
+        String[] parts = cur.split("\n");
+        String prev = parts.length > 0 ? parts[0] : "";
+        StringBuilder nv = new StringBuilder();
+        for (String line : flags.split("\n")) {
+            String t = line.trim();
+            if (t.isEmpty()) continue;
+            nv.append("\u25C6 ").append(t).append('\n');
+        }
+        if (prev.length() > 0) nv.append(prev);
+        liveView.setText(nv.toString().trim());
+        Diag.log("FLAG shown");
+    }
 
     private boolean hasCameraPermission() {
         return checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
@@ -445,10 +537,11 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.2.4\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.3.1\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
+            + ",\"listen\":" + listenOn
             + ",\"deepinfra\":" + Prefs.has(this, Prefs.K_DEEPINFRA)
             + ",\"zai\":" + Prefs.has(this, Prefs.K_ZAI) + "}";
     }

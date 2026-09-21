@@ -81,6 +81,79 @@ public final class AiRouter {
         }, "sidekick-ai").start();
     }
 
+    public interface FactCb { void onResult(String result); }
+
+    private static final String FACT_PROMPT =
+        "You are overhearing a live conversation via smart glasses. Find clear factual "
+        + "claims that are FALSE or highly questionable. Ignore opinions, predictions, "
+        + "personal plans, jokes, and vague statements. If nothing qualifies, reply "
+        + "exactly: NO_FLAG. Otherwise reply with at most 2 lines, each exactly: "
+        + "FLAG: <claim in under 12 words> -> <correction in under 15 words> (<basis in under 8 words>)";
+
+    /** Fact-check a rolling transcript; result is NO_FLAG or FLAG lines. */
+    public static void factCheck(final Context ctx, final String transcript, final FactCb cb) {
+        final Handler ui = new Handler(Looper.getMainLooper());
+        new Thread(() -> {
+            String[][] providers = {
+                {"deepinfra", "https://api.deepinfra.com/v1/openai", "deepseek-ai/DeepSeek-V4-Flash"},
+                {"deepinfra", "https://api.deepinfra.com/v1/openai", "Qwen/Qwen3.8-Flash"},
+                {"zai", "https://api.z.ai/api/paas/v4", "glm-4-air"},
+            };
+            for (final String[] p : providers) {
+                String key = Prefs.get(ctx, p[0].equals("deepinfra") ? Prefs.K_DEEPINFRA : Prefs.K_ZAI);
+                if (key.length() < 8) { Diag.log("fact: no key " + p[0]); continue; }
+                try {
+                    JSONObject body = new JSONObject();
+                    body.put("model", p[2]);
+                    body.put("max_tokens", 160);
+                    body.put("temperature", 0.1);
+                    JSONArray messages = new JSONArray();
+                    messages.put(new JSONObject().put("role", "system").put("content", FACT_PROMPT));
+                    messages.put(new JSONObject().put("role", "user")
+                            .put("content", "Recent conversation transcript:\n" + transcript));
+                    body.put("messages", messages);
+                    String content = postChatRaw(p[1], key, body);
+                    final String result = content == null || content.trim().isEmpty() ? "NO_FLAG" : content.trim();
+                    Diag.log("fact: " + p[2] + " -> " + (result.length() > 90 ? result.substring(0, 90) : result));
+                    ui.post(() -> cb.onResult(result));
+                    return;
+                } catch (Exception e) {
+                    Diag.log("fact: " + p[2] + " FAIL " + e.getMessage());
+                }
+            }
+            Diag.log("fact: all providers failed");
+        }, "sidekick-fact").start();
+    }
+
+    /** POST a prebuilt chat body (text-only) and return assistant content. */
+    private static String postChatRaw(String baseUrl, String key, JSONObject body) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(baseUrl + "/chat/completions").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + key);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(45000);
+        conn.setDoOutput(true);
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        long t0 = System.currentTimeMillis();
+        int code = conn.getResponseCode();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(
+                code >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) sb.append(line);
+        reader.close();
+        Diag.log("fact: HTTP " + code + " in " + (System.currentTimeMillis() - t0) + "ms");
+        if (code >= 400) throw new Exception("HTTP " + code + " " + abbreviate(sb.toString()));
+        JSONObject resp = new JSONObject(sb.toString());
+        JSONArray choices = resp.optJSONArray("choices");
+        if (choices == null || choices.length() == 0) throw new Exception("no choices");
+        JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
+        return msg == null ? "" : msg.optString("content", "");
+    }
+
     private static String extract(String content, String marker) {
         if (content == null) return null;
         int i = content.indexOf(marker);
