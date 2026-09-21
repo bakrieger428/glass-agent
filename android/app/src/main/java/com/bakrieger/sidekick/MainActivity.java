@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
           .append("http ").append(httpUp ? "up :8080" : "FAILED").append('\n')
           .append("wifi ").append(wifiIp() != null ? wifiIp() : "not connected").append('\n')
           .append("net ").append(AiRouter.probe(this)).append('\n')
-          .append("cam ").append(CameraService.pickCamera(this) != null ? "found" : "NONE").append('\n')
+          .append("cam ").append(CameraService.cameraInfo(this)).append('\n')
           .append("rot ").append(rotation).append('\n')
           .append("tts ").append("checking");
         statusView.setText(sb.toString());
@@ -230,6 +230,7 @@ public class MainActivity extends Activity {
         answerView.setText("Capturing...");
         CameraService.capture(this, new CameraService.Callback() {
             @Override public void onJpeg(byte[] jpeg) {
+                saveLastCapture(jpeg);
                 answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
                 AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
                     @Override public void onAnswer(String q, String a, String provider) {
@@ -250,6 +251,14 @@ public class MainActivity extends Activity {
                 answerView.setText("CAMERA ERROR: " + message);
             }
         });
+    }
+
+    private void saveLastCapture(byte[] jpeg) {
+        try {
+            FileOutputStream fos = new FileOutputStream(new File(getFilesDir(), "last_capture.jpg"));
+            fos.write(jpeg);
+            fos.close();
+        } catch (Exception ignored) {}
     }
 
     private void initTts() {

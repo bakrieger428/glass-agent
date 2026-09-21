@@ -97,6 +97,20 @@ public final class SettingsServer {
                 respond(sock, "200", "text/plain",
                         "SAVED\n\nDeepInfra key: " + mask(di) + "\nz.ai key: " + mask(zai)
                         + "\n\nReturn to your glasses. You can close this page.");
+            } else if (path.startsWith("/photo")) {
+                File f = new File(ctx.getFilesDir(), "last_capture.jpg");
+                if (f.exists()) {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(f.toPath());
+                    OutputStream out = sock.getOutputStream();
+                    String head = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n"
+                        + "Content-Length: " + bytes.length + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+                    out.write(head.getBytes(StandardCharsets.UTF_8));
+                    out.write(bytes);
+                    out.flush();
+                    sock.close();
+                    return;
+                }
+                respond(sock, "200", "text/plain", "no capture yet - tap on the glasses first");
             } else if (path.startsWith("/test")) {
                 respond(sock, "200", "text/plain", AiRouter.testKeySync(ctx));
             } else if (path.startsWith("/status")) {
@@ -144,7 +158,12 @@ public final class SettingsServer {
             + "<button type='submit'>Save to glasses</button></form>"
             + "<hr style='border-color:#060;margin:20px 0'>"
             + "<button onclick=\"fetch('/test').then(r=>r.text()).then(t=>document.getElementById('out').textContent=t)\">Test DeepInfra key</button>"
-            + "<pre id='out' style='white-space:pre-wrap'></pre></body></html>";
+            + "<pre id='out' style='white-space:pre-wrap'></pre>"
+            + "<hr style='border-color:#060;margin:20px 0'><h2>Last photo captured by glasses</h2>"
+            + "<img id='ph' src='/photo' style='max-width:100%;border:1px solid #060'>"
+            + "<p><button onclick=\"document.getElementById('ph').src='/photo?'+Date.now()\">Refresh photo</button>"
+            + " <small>Tap capture on the glasses, then refresh here to see what the AI sees.</small></p>"
+            + "</body></html>";
     }
 
     private static void respond(Socket sock, String code, String type, String body) throws Exception {

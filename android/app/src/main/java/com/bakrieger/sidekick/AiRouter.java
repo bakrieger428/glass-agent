@@ -23,11 +23,14 @@ public final class AiRouter {
     }
 
     private static final String PROMPT =
-        "This photo may contain handwriting on paper. "
-        + "1) If handwritten text is visible, transcribe it exactly. "
+        "This photo was taken by smart glasses. Look carefully for ANY handwriting, "
+        + "hand-printed text, or written question on paper, a notebook, a whiteboard, or a screen. "
+        + "Even small or partial handwriting counts. "
+        + "1) Transcribe the handwriting exactly. "
         + "2) If it is a question, answer it concisely in at most 80 words. "
         + "Reply in exactly this format:\nQ: <transcribed handwriting>\nA: <answer>\n"
-        + "If no handwriting is visible, reply with exactly: NO_TEXT";
+        + "If there is truly no handwriting anywhere, reply in exactly this format:\n"
+        + "NO_TEXT: <describe what the photo shows in under 12 words>";
 
     private AiRouter() {}
 
@@ -55,7 +58,8 @@ public final class AiRouter {
                     String aTemp;
                     if (content != null && content.contains("NO_TEXT")) {
                         qTemp = null;
-                        aTemp = "No handwriting detected. Look at the paper and tap again.";
+                        String desc = content.contains(":") ? content.substring(content.indexOf(':') + 1).trim() : content;
+                        aTemp = "No handwriting. Camera sees: " + desc;
                     } else {
                         qTemp = extract(content, "Q:");
                         aTemp = extract(content, "A:");

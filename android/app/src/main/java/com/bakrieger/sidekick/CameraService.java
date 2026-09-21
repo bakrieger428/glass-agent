@@ -52,6 +52,24 @@ public final class CameraService {
         }
     }
 
+    /** Human-readable info about the camera that will be used (for diagnostics). */
+    public static String cameraInfo(Context ctx) {
+        try {
+            CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            String id = pickCamera(ctx);
+            if (id == null || cm == null) return "NONE";
+            CameraCharacteristics ch = cm.getCameraCharacteristics(id);
+            Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
+            String f = facing == null ? "external/null" : facing == 0 ? "FRONT" : facing == 1 ? "BACK" : "EXTERNAL";
+            android.util.Size[] sizes = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP).getOutputSizes(ImageFormat.JPEG);
+            int maxW = 0;
+            for (android.util.Size s : sizes) maxW = Math.max(maxW, s.getWidth());
+            return "#" + id + " " + f + " max" + maxW + "px";
+        } catch (Exception e) {
+            return "err " + e.getMessage();
+        }
+    }
+
     /** Open camera, take one still JPEG, close. Callbacks arrive on the main thread. */
     public static void capture(final Context ctx, final Callback cb) {
         final Handler ui = new Handler(ctx.getMainLooper());
