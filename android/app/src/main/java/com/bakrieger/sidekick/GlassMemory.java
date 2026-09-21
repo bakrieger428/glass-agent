@@ -55,7 +55,9 @@ public final class GlassMemory {
 
     private static void mergeInto(JSONObject store, JSONObject incoming) {
         if (incoming == null) return;
-        for (String key : incoming.keySet()) {
+        java.util.Iterator<String> it = incoming.keys();
+        while (it.hasNext()) {
+            String key = it.next();
             String fact = incoming.optString(key, "").trim();
             if (fact.isEmpty()) continue;
             String old = store.optString(key, "");
@@ -116,7 +118,9 @@ public final class GlassMemory {
             java.util.List<Object[]> scored = new java.util.ArrayList<>();
             for (String store : new String[]{"p", "t"}) {
                 JSONObject obj = store.equals("p") ? people : topics;
-                for (String key : obj.keySet()) {
+                java.util.Iterator<String> kit = obj.keys();
+                while (kit.hasNext()) {
+                    String key = kit.next();
                     double score = 0;
                     if (q.contains(key.toLowerCase())) score += 5;
                     for (String w : words) {
