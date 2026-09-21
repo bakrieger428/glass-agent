@@ -17,13 +17,15 @@ import java.nio.file.Files;
 public final class GlassMemory {
 
     private static final String EXTRACT_PROMPT =
-        "From this conversation transcript, extract durable long-term memory. "
-        + "Return ONLY a compact JSON object with optional keys people and topics, "
-        + "each mapping a name/topic to a one-line fact. Example: "
-        + "{\"people\":{\"Sarah\":\"works in marketing, met at conference\"},"
+        "Extract durable PERSONAL memories from this conversation transcript: facts about the "
+        + "SPEAKER and the people/projects in their life - roles, relationships, names, plans, "
+        + "deadlines, preferences. NEVER extract general world-knowledge claims (science, animals, "
+        + "history, geography, trivia) and NEVER extract statements that are factually wrong - a "
+        + "speaker saying something does not make it a memory. Return ONLY a compact JSON object "
+        + "with optional keys people and topics, each mapping a name/topic to a one-line fact. "
+        + "Example: {\"people\":{\"Sarah\":\"works in marketing, met at conference\"},"
         + "\"topics\":{\"Henderson contract\":\"due Friday, legal reviewing\"}}. "
-        + "No markdown, no arrays. Include only durable facts (roles, relationships, "
-        + "projects, preferences). If nothing durable, return {}.";
+        + "No markdown, no arrays. If nothing durable and personal, return {}.";
 
     public interface ExtractCb { void onDone(int peopleCount, int topicCount); }
 
@@ -138,6 +140,19 @@ public final class GlassMemory {
             return sb.toString().trim();
         } catch (Exception e) {
             return "";
+        }
+    }
+
+    /** Wipe all stored memory cards. */
+    public static void clearAll(Context ctx) {
+        try {
+            File p = memFile(ctx, "people.json");
+            File t = memFile(ctx, "topics.json");
+            if (p.exists()) p.delete();
+            if (t.exists()) t.delete();
+            Diag.log("mem: cleared all");
+        } catch (Exception e) {
+            Diag.log("mem: clear fail " + e.getMessage());
         }
     }
 

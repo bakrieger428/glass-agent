@@ -85,11 +85,15 @@ public final class AiRouter {
     public interface FactCb { void onResult(String result); }
 
     private static final String FACT_PROMPT =
-        "You are overhearing a live conversation via smart glasses. Find clear factual "
-        + "claims that are FALSE or highly questionable. Ignore opinions, predictions, "
-        + "personal plans, jokes, and vague statements. If nothing qualifies, reply "
-        + "exactly: NO_FLAG. Otherwise reply with at most 2 lines, each exactly: "
-        + "FLAG: <claim in under 12 words> -> <correction in under 15 words> (<basis in under 8 words>)";
+        "You overhear a live conversation via smart glasses. Identify clear factual claims "
+        + "that are FALSE, QUESTIONABLE, or ABSURD (e.g. misclassifications like 'a duck is a fish', "
+        + "wrong dates, wrong numbers, wrong names). Ignore opinions, personal plans, and speculation "
+        + "about the future. If a claim is wrong, reply exactly: "
+        + "FLAG: <claim under 12 words> -> <correction under 15 words> (<basis under 8 words>). "
+        + "Additionally, if someone asked a question that went unanswered or a brief relevant fact "
+        + "would genuinely help the conversation, reply exactly: "
+        + "TIP: <helpful suggestion under 18 words>. "
+        + "At most 2 lines total. If nothing qualifies, reply exactly: NO_FLAG";
 
     public interface TextCb { void onResult(String text); }
 
@@ -154,7 +158,7 @@ public final class AiRouter {
         String line;
         while ((line = reader.readLine()) != null) sb.append(line);
         reader.close();
-        Diag.log("fact: HTTP " + code + " in " + (System.currentTimeMillis() - t0) + "ms");
+        Diag.log("txt: HTTP " + code + " in " + (System.currentTimeMillis() - t0) + "ms");
         if (code >= 400) throw new Exception("HTTP " + code + " " + abbreviate(sb.toString()));
         JSONObject resp = new JSONObject(sb.toString());
         JSONArray choices = resp.optJSONArray("choices");

@@ -454,6 +454,15 @@ public class MainActivity extends Activity {
             listenOn = false;
             if (stt != null) stt.stop();
             updateModeLine();
+            if (wordsSinceCheck >= 4 && transcriptBuf.length() > 0) {
+                Diag.log("fact: stop-flush check");
+                final String recent = transcriptBuf.toString();
+                AiRouter.factCheck(this, recent, result -> {
+                    if (result == null || result.contains("NO_FLAG")) return;
+                    showFlag(result);
+                });
+            }
+            wordsSinceCheck = 0;
         }
     }
 
@@ -487,7 +496,7 @@ public class MainActivity extends Activity {
         if (transcriptBuf.length() > 1500) transcriptBuf.delete(0, transcriptBuf.length() - 1500);
         int words = text.trim().split("\\s+").length;
         wordsSinceCheck += words;
-        if (wordsSinceCheck >= 30) {
+        if (wordsSinceCheck >= 12) {
             wordsSinceCheck = 0;
             final String recent = transcriptBuf.toString();
             String mem = GlassMemory.contextFor(this, recent);
@@ -508,7 +517,8 @@ public class MainActivity extends Activity {
         for (String line : flags.split("\n")) {
             String t = line.trim();
             if (t.isEmpty()) continue;
-            nv.append("\u25C6 ").append(t).append('\n');
+            String marker = t.startsWith("TIP") ? "\u25B8" : "\u25C6";
+            nv.append(marker).append(' ').append(t).append('\n');
         }
         if (prev.length() > 0) nv.append(prev);
         liveView.setText(nv.toString().trim());
@@ -639,7 +649,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.4.0\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.4.1\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn

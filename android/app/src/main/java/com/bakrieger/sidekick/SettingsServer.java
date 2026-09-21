@@ -119,6 +119,9 @@ public final class SettingsServer {
                 } else {
                     respond(sock, "200", "text/plain", act == null ? "app not running" : "empty text");
                 }
+            } else if (path.startsWith("/forget")) {
+                GlassMemory.clearAll(ctx);
+                respond(sock, "200", "text/plain", "memory cleared");
             } else if (path.startsWith("/memory")) {
                 respond(sock, "200", "application/json", GlassMemory.memoryJson(ctx));
             } else if (path.startsWith("/extract")) {
@@ -231,6 +234,7 @@ public final class SettingsServer {
             + "<hr style='border-color:#060;margin:20px 0'><h2>Memory</h2>"
             + "<button onclick=\"fetch('/extract').then(r=>r.text()).then(t=>document.getElementById('memp').textContent=t)\">Extract from transcript</button>"
             + " <button onclick=\"fetch('/memory').then(r=>r.text()).then(t=>document.getElementById('memp').textContent=t)\">View memory</button>"
+            + " <button onclick=\"if(confirm('Erase all memory cards?')){fetch('/forget').then(r=>r.text()).then(t=>document.getElementById('memp').textContent=t)}\">Clear memory</button>"
             + "<pre id='memp' style='white-space:pre-wrap'></pre>"
             + "<hr style='border-color:#060;margin:20px 0'><h2>Diagnostics log</h2>"
             + "<button onclick=\"fetch('/diag').then(r=>r.text()).then(t=>document.getElementById('diag').textContent=t)\">Load diagnostics</button>"
