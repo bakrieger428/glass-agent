@@ -179,6 +179,14 @@ public class MainActivity extends Activity {
         root.addView(modeView);
         root.addView(scroller, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        TextView hint = new TextView(this);
+        hint.setText("\u25B6 TAP: capture  \u25B2\u25BC\u25C0\u25B6: scroll\n2-FINGER: listen · modes/keys: :8080");
+        hint.setTextColor(GREEN_DIM);
+        hint.setTypeface(Typeface.MONOSPACE);
+        hint.setTextSize(11);
+        hint.setPadding(0, 16, 0, 0);
+        hint.setGravity(Gravity.BOTTOM);
         root.addView(hint);
         setContentView(root);
     }
