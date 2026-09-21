@@ -120,11 +120,28 @@ public final class CameraService {
         }, stage);
     }
 
-    /** Software brightness boost (gamma-style gain) for dark captures - no driver risk. */
-    public static byte[] boostBrightness(byte[] jpeg, float gain) {
+    /** Adaptive brightness: measures mean luminance, boosts only dark captures toward ~115/255. */
+    public static byte[] boostBrightness(byte[] jpeg, float maxGain) {
         try {
             android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
             if (bmp == null) return jpeg;
+            // measure mean luminance on a tiny sample
+            long sum = 0; int n = 0;
+            int w = bmp.getWidth(), h = bmp.getHeight();
+            int stepX = Math.max(1, w / 32), stepY = Math.max(1, h / 24);
+            for (int y = 0; y < h; y += stepY) {
+                for (int x = 0; x < w; x += stepX) {
+                    int p = bmp.getPixel(x, y);
+                    int r = (p >> 16) & 0xff, g = (p >> 8) & 0xff, b = p & 0xff;
+                    sum += (r * 299 + g * 587 + b * 114) / 1000;
+                    n++;
+                }
+            }
+            float mean = n > 0 ? sum / (float) n : 128f;
+            float gain = 1.0f;
+            if (mean < 95f) gain = Math.min(maxGain, 115f / Math.max(1f, mean));
+            Diag.log("cam: brightness mean=" + Math.round(mean) + " gain=x" + String.format(java.util.Locale.US, "%.2f", gain));
+            if (gain <= 1.01f) { bmp.recycle(); return jpeg; }
             android.graphics.ColorMatrix cm = new android.graphics.ColorMatrix();
             cm.setScale(gain, gain, gain, 1f);
             android.graphics.Bitmap out = android.graphics.Bitmap.createBitmap(bmp.getWidth(), bmp.getHeight(), android.graphics.Bitmap.Config.ARGB_8888);
@@ -137,7 +154,6 @@ public final class CameraService {
             bmp.recycle();
             out.recycle();
             byte[] boosted = bos.toByteArray();
-            Diag.log("cam: brightness x" + gain + " " + (jpeg.length / 1024) + "KB->" + (boosted.length / 1024) + "KB");
             return boosted;
         } catch (Exception e) {
             Diag.log("cam: boost skipped " + e.getMessage());

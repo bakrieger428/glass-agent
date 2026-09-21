@@ -261,7 +261,7 @@ public class MainActivity extends Activity {
         if (!isAuto) answerView.setText("Capturing...");
         CameraService.capture(this, new CameraService.Callback() {
             @Override public void onJpeg(byte[] jpeg) {
-                jpeg = CameraService.boostBrightness(jpeg, 1.7f);
+                jpeg = CameraService.boostBrightness(jpeg, 2.2f);
                 saveLastCapture(jpeg);
                 answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
                 AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
@@ -445,7 +445,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.2.3\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.2.4\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
