@@ -97,6 +97,8 @@ public final class SettingsServer {
                 respond(sock, "200", "text/plain",
                         "SAVED\n\nDeepInfra key: " + mask(di) + "\nz.ai key: " + mask(zai)
                         + "\n\nReturn to your glasses. You can close this page.");
+            } else if (path.startsWith("/test")) {
+                respond(sock, "200", "text/plain", AiRouter.testKeySync(ctx));
             } else if (path.startsWith("/status")) {
                 respond(sock, "200", "application/json", status.statusJson());
             } else {
@@ -139,7 +141,10 @@ public final class SettingsServer {
             + "<input name='deepinfra' type='password' autocomplete='off' placeholder='DeepInfra key'>"
             + "<label>z.ai API key (fallback)</label>"
             + "<input name='zai' type='password' autocomplete='off' placeholder='z.ai key'>"
-            + "<button type='submit'>Save to glasses</button></form></body></html>";
+            + "<button type='submit'>Save to glasses</button></form>"
+            + "<hr style='border-color:#060;margin:20px 0'>"
+            + "<button onclick=\"fetch('/test').then(r=>r.text()).then(t=>document.getElementById('out').textContent=t)\">Test DeepInfra key</button>"
+            + "<pre id='out' style='white-space:pre-wrap'></pre></body></html>";
     }
 
     private static void respond(Socket sock, String code, String type, String body) throws Exception {

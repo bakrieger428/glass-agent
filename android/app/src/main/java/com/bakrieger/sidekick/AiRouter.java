@@ -36,15 +36,19 @@ public final class AiRouter {
         new Thread(() -> {
             String dataUrl = CameraService.toDataUrl(jpeg);
             String[] providers = {"deepinfra", "zai"};
-            String lastErr = "no providers configured";
+            StringBuilder errs = new StringBuilder();
             for (final String p : providers) {
                 String key = Prefs.get(ctx, p.equals("deepinfra") ? Prefs.K_DEEPINFRA : Prefs.K_ZAI);
-                if (key.length() < 8) { lastErr = "no key for " + p; continue; }
+                if (key.length() < 8) {
+                    if (errs.length() > 0) errs.append(" | ");
+                    errs.append(p).append(": key not set");
+                    continue;
+                }
                 String baseUrl = p.equals("deepinfra")
                         ? "https://api.deepinfra.com/v1/openai"
                         : "https://api.z.ai/api/paas/v4";
                 String model = p.equals("deepinfra")
-                        ? "Qwen/Qwen2.5-VL-72B-Instruct" : "glm-4.5v";
+                        ? "Qwen/Qwen3-VL-30B-A3B-Instruct" : "glm-4.5v";
                 try {
                     String content = postChat(baseUrl, key, model, dataUrl);
                     String qTemp;
@@ -63,10 +67,11 @@ public final class AiRouter {
                     ui.post(() -> cb.onAnswer(q, a, prov));
                     return;
                 } catch (Exception e) {
-                    lastErr = p + ": " + e.getMessage();
+                    if (errs.length() > 0) errs.append(" | ");
+                    errs.append(p).append(": ").append(e.getMessage());
                 }
             }
-            final String err = lastErr;
+            final String err = errs.length() > 0 ? errs.toString() : "no providers configured";
             ui.post(() -> cb.onError(err));
         }, "sidekick-ai").start();
     }
@@ -144,6 +149,47 @@ public final class AiRouter {
             return "HTTP " + code + " in " + (System.currentTimeMillis() - t0) + "ms";
         } catch (Exception e) {
             return "FAIL: " + e.getMessage();
+        }
+    }
+
+    /** Synchronous key/connectivity test (called from the settings server thread). */
+    public static String testKeySync(Context ctx) {
+        String key = Prefs.get(ctx, Prefs.K_DEEPINFRA);
+        if (key.length() < 8) return "NO KEY SAVED. Paste your DeepInfra key and save first.";
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", "Qwen/Qwen3-VL-30B-A3B-Instruct");
+            body.put("max_tokens", 10);
+            JSONArray content = new JSONArray();
+            content.put(new JSONObject().put("type", "text").put("text", "Reply with exactly: OK"));
+            JSONArray messages = new JSONArray();
+            messages.put(new JSONObject().put("role", "user").put("content", content));
+            body.put("messages", messages);
+            String baseUrl = "https://api.deepinfra.com/v1/openai";
+            HttpURLConnection conn = (HttpURLConnection) new URL(baseUrl + "/chat/completions").openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Authorization", "Bearer " + key);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(20000);
+            conn.setDoOutput(true);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            int code = conn.getResponseCode();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    code >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+            reader.close();
+            if (code >= 400) return "FAILED (HTTP " + code + "): " + abbreviate(sb.toString());
+            JSONObject resp = new JSONObject(sb.toString());
+            String reply = resp.getJSONArray("choices").getJSONObject(0)
+                    .getJSONObject("message").optString("content", "");
+            return "SUCCESS - model replied: " + reply + " (HTTP " + code + ")";
+        } catch (Exception e) {
+            return "FAILED: " + e.getMessage();
         }
     }
 }
