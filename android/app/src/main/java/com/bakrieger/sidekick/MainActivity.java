@@ -74,6 +74,7 @@ public class MainActivity extends Activity {
 
     // web + listen mode
     public static MainActivity instance;
+    private long lastBack = 0;
 
     // listen mode (fact-checker)
     private SttLoop stt;
@@ -292,8 +293,27 @@ public class MainActivity extends Activity {
         prevFrame = null;
         Diag.log("capture: " + (isAuto ? "AUTO" : "tap"));
         if (!isAuto) answerView.setText("Capturing...");
-        CameraService.capture(this, new CameraService.Callback() {
+        captureWithExposure(isAuto, 0);
+    }
+
+    /** mode 0 = bare capture; 1 = dark retry (+EV); 2 = blown retry (-EV). */
+    private void captureWithExposure(final boolean isAuto, final int exposurePass) {
+        CameraService.captureVariant(this, new CameraService.Callback() {
             @Override public void onJpeg(byte[] jpeg) {
+                float mean = CameraService.measureMean(jpeg);
+                Diag.log("cam: exposure pass" + exposurePass + " mean=" + Math.round(mean));
+                if (exposurePass == 0 && mean > 235f) {
+                    Diag.log("cam: blown -> retry -1EV");
+                    if (!isAuto) answerView.setText("Adjusting exposure...");
+                    captureWithExposure(isAuto, 2);
+                    return;
+                }
+                if (exposurePass == 0 && mean >= 0f && mean < 45f) {
+                    Diag.log("cam: dark -> retry +2EV");
+                    if (!isAuto) answerView.setText("Adjusting exposure...");
+                    captureWithExposure(isAuto, 1);
+                    return;
+                }
                 jpeg = CameraService.boostBrightness(jpeg, 2.2f);
                 saveLastCapture(jpeg);
                 answerView.setText("Thinking... (" + (jpeg.length / 1024) + "KB)");
@@ -322,7 +342,7 @@ public class MainActivity extends Activity {
                 busy = false;
                 answerView.setText("CAMERA ERROR: " + message);
             }
-        });
+        }, exposurePass);
     }
 
     // ---------- Input ----------
@@ -351,7 +371,13 @@ public class MainActivity extends Activity {
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            moveTaskToBack(true);
+            long now = System.currentTimeMillis();
+            if (now - lastBack < 800) {
+                moveTaskToBack(true); // double-BACK = exit
+            } else {
+                toggleListen();       // single BACK = toggle listen
+            }
+            lastBack = now;
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -423,6 +449,28 @@ public class MainActivity extends Activity {
         if (error != null) { Diag.log("stt: cb err " + error); return; }
         if (text == null || text.isEmpty()) return;
         Diag.log("stt: \"" + (text.length() > 60 ? text.substring(0, 60) + "..." : text) + "\"");
+        // voice commands (matched before fact-check, never stored)
+        String lower = text.toLowerCase(Locale.US);
+        if (lower.contains("sidekick")) {
+            if ((lower.contains("listen off") || lower.contains("stop listening")) && listenOn) {
+                Diag.log("voice: listen off");
+                speak("Listening off");
+                toggleListen();
+                return;
+            }
+            if (lower.contains("auto off") && autoOn) {
+                Diag.log("voice: auto off");
+                speak("Auto off");
+                toggleAuto();
+                return;
+            }
+            if (lower.contains("auto on") && !autoOn) {
+                Diag.log("voice: auto on");
+                speak("Auto on");
+                toggleAuto();
+                return;
+            }
+        }
         transcriptBuf.append(text.trim()).append(' ');
         if (transcriptBuf.length() > 1500) transcriptBuf.delete(0, transcriptBuf.length() - 1500);
         int words = text.trim().split("\\s+").length;
@@ -551,7 +599,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.3.2\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.3.3\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
