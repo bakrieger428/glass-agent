@@ -47,10 +47,10 @@ public class MainActivity extends Activity {
 
     // auto-detect tuning
     private static final long SCAN_MS = 5000;        // glance interval
-    private static final float MOTION_DIFF = 14f;    // mean-abs luminance delta = motion
-    private static final float STILL_DIFF = 6f;      // below this = still
+    private static final float MOTION_DIFF = 20f;    // clear movement (real data: writing = 20-40)
+    private static final float STILL_DIFF = 16f;     // holding still (real noise band: 6-15)
     private static final int NEED_MOTION = 2;        // consecutive motion scans
-    private static final int NEED_STILL = 2;         // consecutive still scans after motion
+    private static final int NEED_STILL = 3;         // ~15s of stillness before auto-fire
     private static final long AUTO_COOLDOWN_MS = 20000;
 
     private TextView statusView;
@@ -180,9 +180,8 @@ public class MainActivity extends Activity {
                             stillRun = 0;
                         } else if (diff < STILL_DIFF) {
                             stillRun++;
-                        } else {
-                            stillRun = 0;
                         }
+                        // 16-20 = gray zone: leave counters unchanged (noise tolerance)
                         Diag.log("scan: d=" + String.format(Locale.US, "%.1f", diff)
                                 + " motion=" + motionRun + " still=" + stillRun);
                         maybeFire();
@@ -255,6 +254,9 @@ public class MainActivity extends Activity {
         if (busy) return;
         busy = true;
         questionView.setText("");
+        motionRun = 0;
+        stillRun = 0;
+        prevFrame = null;
         Diag.log("capture: " + (isAuto ? "AUTO" : "tap"));
         if (!isAuto) answerView.setText("Capturing...");
         CameraService.capture(this, new CameraService.Callback() {
@@ -443,7 +445,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.2.2\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.2.3\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
