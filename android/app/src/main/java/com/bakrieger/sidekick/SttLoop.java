@@ -138,7 +138,7 @@ public class SttLoop {
     /** Content filter: whisper's known phantom phrases in isolation = not real speech. */
     private static boolean isLikelyHallucination(String t) {
         if (t == null) return true;
-        String s = t.trim().toLowerCase().replaceAll("[^a-z ]", " ").replaceAll("\s+", " ").trim();
+        String s = t.trim().toLowerCase().replaceAll("[^a-z ]", " ").replaceAll("\\s+", " ").trim();
         if (s.isEmpty()) return true;
         if (s.split(" ").length <= 3) {
             String[] phantoms = {
