@@ -468,6 +468,32 @@ public class MainActivity extends Activity {
         Diag.log("stt: \"" + (text.length() > 60 ? text.substring(0, 60) + "..." : text) + "\"");
         // voice commands (matched before fact-check, never stored)
         String lower = text.toLowerCase(Locale.US);
+        // memory commands
+        if (lower.contains("who is") && lower.split("\\s+").length >= 3) {
+            String name = text.trim();
+            int wi = lower.indexOf("who is");
+            if (wi >= 0 && wi + 6 < name.length()) {
+                name = name.substring(wi + 6).trim().split("[.,!?]")[0].trim();
+                if (!name.isEmpty() && name.length() <= 40) {
+                    Diag.log("voice: who is " + name);
+                    handleWhoIs(name);
+                    return;
+                }
+            }
+        }
+        if (lower.startsWith("remember that") || (lower.contains("sidekick") && lower.contains("remember"))) {
+            String fact = text.trim();
+            int ri = lower.indexOf("remember that");
+            if (ri >= 0) fact = text.trim().substring(ri + 13).trim();
+            fact = fact.split("[.]")[0].trim();
+            if (fact.length() >= 3) {
+                Diag.log("voice: remember that ...");
+                GlassMemory.addNote(this, fact);
+                speak("Remembered");
+                addHistory("\u25B8 REMEMBERED: " + fact);
+                return;
+            }
+        }
         if (lower.contains("sidekick")) {
             if ((lower.contains("listen off") || lower.contains("stop listening")) && listenOn) {
                 Diag.log("voice: listen off");
@@ -574,6 +600,17 @@ public class MainActivity extends Activity {
                     logEpisode(q, answer, "typed");
                     speak(answer);
                 });
+    }
+
+    private void handleWhoIs(String name) {
+        String found = GlassMemory.lookup(this, name);
+        if (found.isEmpty()) {
+            speak("I don't have anything on " + name + " yet");
+            addHistory("\u25B8 WHO IS " + name + "?\n(nothing in memory yet)");
+        } else {
+            speak(found);
+            addHistory("\u25B8 WHO IS " + name + "?\n" + found);
+        }
     }
 
     /** Snapshot of the rolling transcript (call on UI thread). */

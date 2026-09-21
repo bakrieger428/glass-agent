@@ -143,6 +143,40 @@ public final class GlassMemory {
         }
     }
 
+    /** Store an explicit 'remember that ...' fact instantly. */
+    public static void addNote(Context ctx, String fact) {
+        try {
+            JSONObject topics = loadObj(ctx, "topics.json");
+            String key = fact.length() > 28 ? fact.substring(0, 28) : fact;
+            topics.put(key, fact);
+            saveObj(ctx, "topics.json", topics);
+            Diag.log("mem: note stored");
+        } catch (Exception e) {
+            Diag.log("mem: note fail " + e.getMessage());
+        }
+    }
+
+    /** Direct lookup for 'who is X': matching memory lines or "". */
+    public static String lookup(Context ctx, String name) {
+        try {
+            String q = name.toLowerCase();
+            StringBuilder sb = new StringBuilder();
+            for (String store : new String[]{"people.json", "topics.json"}) {
+                JSONObject obj = loadObj(ctx, store);
+                java.util.Iterator<String> it = obj.keys();
+                while (it.hasNext()) {
+                    String key = it.next();
+                    if (key.toLowerCase().contains(q) || obj.optString(key, "").toLowerCase().contains(q)) {
+                        sb.append(key).append(": ").append(obj.optString(key, "")).append('\n');
+                    }
+                }
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** Wipe all stored memory cards. */
     public static void clearAll(Context ctx) {
         try {

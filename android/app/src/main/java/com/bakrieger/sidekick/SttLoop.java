@@ -95,12 +95,15 @@ public class SttLoop {
             recordNext();
             return;
         }
-        final String promptTail = lastTail;
+        String promptTail = lastTail != null && lastTail.trim().split(" ").length >= 4
+                ? "The following is a conversation transcript. " + lastTail : "";
         new Thread(() -> {
             try {
                 final String text = transcribe(bytes, promptTail);
                 if (isLikelyHallucination(text)) {
                     Diag.log("stt: drop phantom \"" + (text == null ? "" : text.trim()) + "\"");
+                } else if (isEcho(text, promptTail)) {
+                    Diag.log("stt: drop echo loop");
                 } else {
                     lastTail = text.length() > 200 ? text.substring(text.length() - 200) : text;
                     if (cb != null) ui.post(() -> cb.onTranscript(text, null));
@@ -150,6 +153,23 @@ public class SttLoop {
             }
         }
         return false;
+    }
+
+    /** Echo-loop detector: >=80% token overlap with the anchor = whisper repeating itself. */
+    private static boolean isEcho(String text, String anchor) {
+        try {
+            if (text == null || anchor == null || anchor.isEmpty()) return false;
+            java.util.Set<String> a = new java.util.HashSet<>(java.util.Arrays.asList(
+                    anchor.toLowerCase().replaceAll("[^a-z ]", " ").trim().split("\\s+")));
+            java.util.Set<String> b = new java.util.HashSet<>(java.util.Arrays.asList(
+                    text.toLowerCase().replaceAll("[^a-z ]", " ").trim().split("\\s+")));
+            if (a.isEmpty() || b.isEmpty()) return false;
+            int overlap = 0;
+            for (String w : b) if (a.contains(w)) overlap++;
+            return overlap >= 0.8 * b.size();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private String transcribe(byte[] audio, String promptTail) throws Exception {

@@ -116,7 +116,9 @@ public final class AiRouter {
                     body.put("max_tokens", maxTokens);
                     body.put("temperature", 0.2);
                     JSONArray messages = new JSONArray();
-                    messages.put(new JSONObject().put("role", "system").put("content", systemPrompt));
+                    String sys = systemPrompt;
+                    if (p[2].contains("Qwen3")) sys = sys + " /no_think";
+                    messages.put(new JSONObject().put("role", "system").put("content", sys));
                     messages.put(new JSONObject().put("role", "user").put("content", userText));
                     body.put("messages", messages);
                     String content = postChatRaw(p[1], key, body);
