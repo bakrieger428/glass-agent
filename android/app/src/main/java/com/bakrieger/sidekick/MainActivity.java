@@ -90,6 +90,10 @@ public class MainActivity extends Activity {
           .append("cam ").append(CameraService.cameraInfo(this)).append('\n')
           .append("tts ").append("checking");
         statusView.setText(sb.toString());
+        for (String line : CameraService.fullFacts(this).split("\n")) {
+            if (!line.trim().isEmpty()) Diag.log(line);
+        }
+        Diag.log("boot: ui up, auto=" + autoOn);
     }
 
     @Override
@@ -179,12 +183,16 @@ public class MainActivity extends Activity {
                         } else {
                             stillRun = 0;
                         }
+                        Diag.log("scan: d=" + String.format(Locale.US, "%.1f", diff)
+                                + " motion=" + motionRun + " still=" + stillRun);
                         maybeFire();
                     }
                     prevFrame = frame;
                 }
                 @Override public void onError(String message) {
                     scanning = false;
+                    Diag.log("scan: CAPTURE FAIL " + message);
+                    statusView.append("\nscan err: " + message);
                 }
             }, 640);
         }
@@ -198,6 +206,7 @@ public class MainActivity extends Activity {
             lastAutoFire = now;
             motionRun = 0;
             stillRun = 0;
+            Diag.log("auto: TRIGGER fired (motion+still pattern)");
             runOnUiThread(() -> {
                 answerView.setText("AUTO \u2014 reading your writing...");
                 fireCapture(true);
@@ -246,6 +255,7 @@ public class MainActivity extends Activity {
         if (busy) return;
         busy = true;
         questionView.setText("");
+        Diag.log("capture: " + (isAuto ? "AUTO" : "tap"));
         if (!isAuto) answerView.setText("Capturing...");
         CameraService.capture(this, new CameraService.Callback() {
             @Override public void onJpeg(byte[] jpeg) {
@@ -254,6 +264,7 @@ public class MainActivity extends Activity {
                 AiRouter.askAboutPhoto(MainActivity.this, jpeg, new AiRouter.Callback() {
                     @Override public void onAnswer(String q, String a, String provider) {
                         busy = false;
+                        Diag.log("ai: answered via " + provider + " len=" + (a == null ? 0 : a.length()));
                         boolean noText = a != null && a.startsWith("No handwriting");
                         if (isAuto && noText) {
                             statusView.append("\nauto: no text");
@@ -266,6 +277,7 @@ public class MainActivity extends Activity {
                     }
                     @Override public void onError(String message) {
                         busy = false;
+                        Diag.log("ai: ERROR " + message);
                         if (!isAuto) answerView.setText("ERROR: " + message);
                     }
                 });

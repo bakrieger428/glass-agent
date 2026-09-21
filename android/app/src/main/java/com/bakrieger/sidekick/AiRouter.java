@@ -42,6 +42,7 @@ public final class AiRouter {
             StringBuilder errs = new StringBuilder();
             for (final String p : providers) {
                 String key = Prefs.get(ctx, p.equals("deepinfra") ? Prefs.K_DEEPINFRA : Prefs.K_ZAI);
+                Diag.log("ai: trying " + p + " key=" + (key.length() >= 8 ? "set" : "MISSING"));
                 if (key.length() < 8) {
                     if (errs.length() > 0) errs.append(" | ");
                     errs.append(p).append(": key not set");
@@ -117,7 +118,9 @@ public final class AiRouter {
         try (OutputStream os = conn.getOutputStream()) {
             os.write(body.toString().getBytes(StandardCharsets.UTF_8));
         }
+        long t0 = System.currentTimeMillis();
         int code = conn.getResponseCode();
+        Diag.log("ai: " + conn.getURL().getHost() + " HTTP " + code + " in " + (System.currentTimeMillis() - t0) + "ms");
         BufferedReader reader = new BufferedReader(new InputStreamReader(
                 code >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8));
         StringBuilder sb = new StringBuilder();
