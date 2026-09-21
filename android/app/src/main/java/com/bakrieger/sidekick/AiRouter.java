@@ -47,16 +47,18 @@ public final class AiRouter {
                         ? "Qwen/Qwen2.5-VL-72B-Instruct" : "glm-4.5v";
                 try {
                     String content = postChat(baseUrl, key, model, dataUrl);
-                    final String q;
-                    final String a;
+                    String qTemp;
+                    String aTemp;
                     if (content != null && content.contains("NO_TEXT")) {
-                        q = null;
-                        a = "No handwriting detected. Look at the paper and tap again.";
+                        qTemp = null;
+                        aTemp = "No handwriting detected. Look at the paper and tap again.";
                     } else {
-                        q = extract(content, "Q:");
-                        a = extract(content, "A:");
-                        if (a == null) a = content != null ? content.trim() : "empty response";
+                        qTemp = extract(content, "Q:");
+                        aTemp = extract(content, "A:");
+                        if (aTemp == null) aTemp = content != null ? content.trim() : "empty response";
                     }
+                    final String q = qTemp;
+                    final String a = aTemp;
                     final String prov = p;
                     ui.post(() -> cb.onAnswer(q, a, prov));
                     return;
