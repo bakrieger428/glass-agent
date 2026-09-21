@@ -98,6 +98,39 @@ public final class SettingsServer {
                 respond(sock, "200", "text/plain",
                         "SAVED\n\nDeepInfra key: " + mask(di) + "\nz.ai key: " + mask(zai)
                         + "\n\nReturn to your glasses. You can close this page.");
+            } else if (path.startsWith("/idle")) {
+                String qs = path.contains("?") ? path.substring(path.indexOf('?') + 1) : body;
+                int sec = 15;
+                for (String pair : qs.split("&")) {
+                    String[] kv = pair.split("=", 2);
+                    if (kv.length == 2 && kv[0].equals("sec")) {
+                        try { sec = Integer.parseInt(kv[1].trim()); } catch (Exception ignored) {}
+                    }
+                }
+                sec = Math.max(5, Math.min(30, sec));
+                Prefs.setInt(ctx, "auto.stillScans", (int) Math.round(sec / 5.0));
+                respond(sock, "200", "text/plain", "idle time set to " + sec + "s (" + Math.round(sec / 5.0) + " still scans)");
+            } else if (path.startsWith("/type")) {
+                String text = param(body, "text");
+                final MainActivity act = MainActivity.instance;
+                if (act != null && !text.isEmpty()) {
+                    act.runOnUiThread(() -> act.typedQuestion(text));
+                    respond(sock, "200", "text/plain", "SENT to glasses");
+                } else {
+                    respond(sock, "200", "text/plain", act == null ? "app not running" : "empty text");
+                }
+            } else if (path.startsWith("/memory")) {
+                respond(sock, "200", "application/json", GlassMemory.memoryJson(ctx));
+            } else if (path.startsWith("/extract")) {
+                final MainActivity act = MainActivity.instance;
+                if (act != null) {
+                    final Context appCtx = ctx;
+                    act.runOnUiThread(() -> GlassMemory.extract(appCtx, act.transcriptSnapshot(),
+                            (p, t) -> Diag.log("mem: extract done p=" + p + " t=" + t)));
+                    respond(sock, "200", "text/plain", "extraction started - View memory in a few seconds");
+                } else {
+                    respond(sock, "200", "text/plain", "app not running");
+                }
             } else if (path.startsWith("/auto")) {
                 final MainActivity act = MainActivity.instance;
                 if (act != null) {
@@ -186,6 +219,19 @@ public final class SettingsServer {
             + "<button onclick=\"fetch('/listen').then(()=>setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('mout').textContent='auto='+s.auto+' listen='+s.listen),400))\">Toggle listen</button>"
             + " <button onclick=\"fetch('/auto').then(()=>setTimeout(()=>fetch('/status').then(r=>r.json()).then(s=>document.getElementById('mout').textContent='auto='+s.auto+' listen='+s.listen),400))\">Toggle auto</button>"
             + "<pre id='mout'>modes toggle here - state appears after tap</pre>"
+            + "<hr style='border-color:#060;margin:20px 0'><h2>Keyboard to glasses</h2>"
+            + "<form method='POST' action='/type'>"
+            + "<input name='text' style='width:70%;padding:10px;font:16px monospace;background:#020;color:#0f6;border:1px solid #060' placeholder='Ask anything - the answer appears on your glasses'>"
+            + " <button>Send</button></form>"
+            + "<hr style='border-color:#060;margin:20px 0'><h2>Auto-capture idle time</h2>"
+            + "<input type='range' min='5' max='30' step='5' id='idle' value='15' oninput='document.getElementById(\"idlev\").textContent=this.value+\"s\"'>"
+            + " <span id='idlev'>15s</span>"
+            + "<br><button onclick=\"fetch('/idle?sec='+document.getElementById('idle').value).then(r=>r.text()).then(t=>document.getElementById('idleout').textContent=t)\">Save idle time</button>"
+            + "<pre id='idleout'></pre>"
+            + "<hr style='border-color:#060;margin:20px 0'><h2>Memory</h2>"
+            + "<button onclick=\"fetch('/extract').then(r=>r.text()).then(t=>document.getElementById('memp').textContent=t)\">Extract from transcript</button>"
+            + " <button onclick=\"fetch('/memory').then(r=>r.text()).then(t=>document.getElementById('memp').textContent=t)\">View memory</button>"
+            + "<pre id='memp' style='white-space:pre-wrap'></pre>"
             + "<hr style='border-color:#060;margin:20px 0'><h2>Diagnostics log</h2>"
             + "<button onclick=\"fetch('/diag').then(r=>r.text()).then(t=>document.getElementById('diag').textContent=t)\">Load diagnostics</button>"
             + "<pre id='diag' style='white-space:pre-wrap;font-size:11px'></pre>"

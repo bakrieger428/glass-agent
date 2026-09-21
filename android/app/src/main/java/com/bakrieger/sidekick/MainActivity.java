@@ -74,7 +74,6 @@ public class MainActivity extends Activity {
 
     // web + listen mode
     public static MainActivity instance;
-    private long lastBack = 0;
 
     // listen mode (fact-checker)
     private SttLoop stt;
@@ -167,7 +166,7 @@ public class MainActivity extends Activity {
         answerView.setLineSpacing(4, 1);
 
         TextView hint = new TextView(this);
-        hint.setText("\u25B6 TAP: capture  \u25B2\u25BC\u25C0\u25B6: scroll\nmodes: phone page :8080");
+        hint.setText("\u25B6 TAP: capture  \u25B2\u25BC\u25C0\u25B6: scroll\n2-FINGER: listen · modes/keys: :8080");
         hint.setTextColor(GREEN_DIM);
         hint.setTypeface(Typeface.MONOSPACE);
         hint.setTextSize(11);
@@ -234,7 +233,8 @@ public class MainActivity extends Activity {
 
     private void maybeFire() {
         long now = System.currentTimeMillis();
-        if (motionRun >= NEED_MOTION && stillRun >= NEED_STILL
+        int needStill = Math.max(1, Prefs.getInt(this, "auto.stillScans", 3));
+        if (motionRun >= NEED_MOTION && stillRun >= needStill
                 && now - lastAutoFire > AUTO_COOLDOWN_MS && !busy) {
             lastAutoFire = now;
             motionRun = 0;
@@ -383,13 +383,7 @@ public class MainActivity extends Activity {
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            long now = System.currentTimeMillis();
-            if (now - lastBack < 800) {
-                moveTaskToBack(true); // double-BACK = exit
-            } else {
-                toggleListen();       // single BACK = toggle listen
-            }
-            lastBack = now;
+            moveTaskToBack(true);
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -397,7 +391,13 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_POINTER_DOWN && event.getPointerCount() >= 2) {
+            Diag.log("input: two-finger -> listen toggle");
+            toggleListen();
+            return true;
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
             long now = System.currentTimeMillis();
             if (now - lastTap < 400) return true;
             lastTap = now;
@@ -490,7 +490,10 @@ public class MainActivity extends Activity {
         if (wordsSinceCheck >= 30) {
             wordsSinceCheck = 0;
             final String recent = transcriptBuf.toString();
-            AiRouter.factCheck(this, recent, result -> {
+            String mem = GlassMemory.contextFor(this, recent);
+            String withMem = mem.isEmpty() ? recent
+                    : "KNOWN MEMORY (user context):\n" + mem + "\n\nTranscript:\n" + recent;
+            AiRouter.factCheck(this, withMem, result -> {
                 if (result == null || result.contains("NO_FLAG")) return;
                 showFlag(result);
             });
@@ -510,6 +513,31 @@ public class MainActivity extends Activity {
         if (prev.length() > 0) nv.append(prev);
         liveView.setText(nv.toString().trim());
         Diag.log("FLAG shown");
+    }
+
+    /** iPhone keyboard input: /type POST lands here. */
+    public void typedQuestion(final String text) {
+        if (text == null || text.trim().isEmpty()) return;
+        final String q = text.trim();
+        Diag.log("typed: \"" + (q.length() > 60 ? q.substring(0, 60) + "..." : q) + "\"");
+        questionView.setText("Q: " + q);
+        answerView.setText("Thinking...");
+        String mem = GlassMemory.contextFor(this, q);
+        String user = (mem.isEmpty() ? "" : "KNOWN MEMORY:\n" + mem + "\n\n") + q;
+        AiRouter.askText(this,
+                "You are Sidekick, an assistant on the user's smart glasses. Answer concisely, max 90 words.",
+                user, 220,
+                answer -> {
+                    answerView.setText(answer == null || answer.isEmpty() ? "(no answer)" : answer);
+                    Diag.log("typed: answered len=" + (answer == null ? 0 : answer.length()));
+                    logEpisode(q, answer, "typed");
+                    speak(answer);
+                });
+    }
+
+    /** Snapshot of the rolling transcript (call on UI thread). */
+    public String transcriptSnapshot() {
+        return transcriptBuf.toString();
     }
 
     private boolean hasCameraPermission() {
@@ -611,11 +639,12 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.3.4\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.4.0\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
             + ",\"listen\":" + listenOn
+            + ",\"idleSecs\":" + (Math.max(1, Prefs.getInt(this, "auto.stillScans", 3)) * 5)
             + ",\"deepinfra\":" + Prefs.has(this, Prefs.K_DEEPINFRA)
             + ",\"zai\":" + Prefs.has(this, Prefs.K_ZAI) + "}";
     }

@@ -23,14 +23,15 @@ public final class AiRouter {
     }
 
     private static final String PROMPT =
-        "This photo was taken by smart glasses. Look carefully for ANY handwriting, "
-        + "hand-printed text, or written question on paper, a notebook, a whiteboard, or a screen. "
-        + "Even small or partial handwriting counts. "
-        + "1) Transcribe the handwriting exactly. "
-        + "2) If it is a question, answer it concisely in at most 80 words. "
-        + "Reply in exactly this format:\nQ: <transcribed handwriting>\nA: <answer>\n"
-        + "If there is truly no handwriting anywhere, reply in exactly this format:\n"
-        + "NO_TEXT: <describe what the photo shows in under 12 words>";
+        "This photo was taken by smart glasses. It may show HANDWRITING on paper/notebook/whiteboard, "
+        + "OR a SCREEN (phone, tablet, computer, TV, e-reader). "
+        + "If handwriting: transcribe it exactly. If a screen: read its visible content. "
+        + "If the content is a question, answer it concisely (max 80 words). "
+        + "If it is not a question, give the most useful brief response to the content "
+        + "(max 60 words: summary, next step, or key fact). "
+        + "Reply in exactly this format:\nQ: <transcribed handwriting or brief screen content>\nA: <answer>\n"
+        + "If there is neither handwriting nor readable screen content, reply exactly:\n"
+        + "NO_TEXT: <what the photo shows in under 12 words>";
 
     private AiRouter() {}
 
@@ -90,8 +91,11 @@ public final class AiRouter {
         + "exactly: NO_FLAG. Otherwise reply with at most 2 lines, each exactly: "
         + "FLAG: <claim in under 12 words> -> <correction in under 15 words> (<basis in under 8 words>)";
 
-    /** Fact-check a rolling transcript; result is NO_FLAG or FLAG lines. */
-    public static void factCheck(final Context ctx, final String transcript, final FactCb cb) {
+    public interface TextCb { void onResult(String text); }
+
+    /** Generic text completion through the provider chain. Returns trimmed content. */
+    public static void askText(final Context ctx, final String systemPrompt, final String userText,
+                               final int maxTokens, final TextCb cb) {
         final Handler ui = new Handler(Looper.getMainLooper());
         new Thread(() -> {
             String[][] providers = {
@@ -101,28 +105,33 @@ public final class AiRouter {
             };
             for (final String[] p : providers) {
                 String key = Prefs.get(ctx, p[0].equals("deepinfra") ? Prefs.K_DEEPINFRA : Prefs.K_ZAI);
-                if (key.length() < 8) { Diag.log("fact: no key " + p[0]); continue; }
+                if (key.length() < 8) continue;
                 try {
                     JSONObject body = new JSONObject();
                     body.put("model", p[2]);
-                    body.put("max_tokens", 160);
-                    body.put("temperature", 0.1);
+                    body.put("max_tokens", maxTokens);
+                    body.put("temperature", 0.2);
                     JSONArray messages = new JSONArray();
-                    messages.put(new JSONObject().put("role", "system").put("content", FACT_PROMPT));
-                    messages.put(new JSONObject().put("role", "user")
-                            .put("content", "Recent conversation transcript:\n" + transcript));
+                    messages.put(new JSONObject().put("role", "system").put("content", systemPrompt));
+                    messages.put(new JSONObject().put("role", "user").put("content", userText));
                     body.put("messages", messages);
                     String content = postChatRaw(p[1], key, body);
-                    final String result = content == null || content.trim().isEmpty() ? "NO_FLAG" : content.trim();
-                    Diag.log("fact: " + p[2] + " -> " + (result.length() > 90 ? result.substring(0, 90) : result));
+                    final String result = content == null ? "" : content.trim();
                     ui.post(() -> cb.onResult(result));
                     return;
                 } catch (Exception e) {
-                    Diag.log("fact: " + p[2] + " FAIL " + e.getMessage());
+                    Diag.log("text: " + p[2] + " FAIL " + e.getMessage());
                 }
             }
-            Diag.log("fact: all providers failed");
-        }, "sidekick-fact").start();
+            Diag.log("text: all providers failed");
+            ui.post(() -> cb.onResult(""));
+        }, "sidekick-text").start();
+    }
+
+    /** Fact-check a rolling transcript; result is NO_FLAG or FLAG lines. */
+    public static void factCheck(final Context ctx, final String transcript, final FactCb cb) {
+        askText(ctx, FACT_PROMPT, "Recent conversation transcript:\n" + transcript, 160,
+                result -> cb.onResult(result == null || result.isEmpty() ? "NO_FLAG" : result));
     }
 
     /** POST a prebuilt chat body (text-only) and return assistant content. */
