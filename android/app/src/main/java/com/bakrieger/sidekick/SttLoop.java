@@ -55,6 +55,16 @@ public class SttLoop {
         Diag.log("stt: loop stop");
     }
 
+    private void stopRecorder() {
+        try {
+            if (recorder != null) {
+                try { recorder.stop(); } catch (Exception ignored) {}
+                recorder.release();
+                recorder = null;
+            }
+        } catch (Exception ignored) {}
+    }
+
     private void recordNext() {
         if (!running) return;
         try {

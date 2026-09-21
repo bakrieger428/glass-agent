@@ -378,7 +378,7 @@ public class MainActivity extends Activity {
 
     // ---------- Listen mode (conversation fact-checker) ----------
 
-    private void toggleListen() {
+    public void toggleListen() {
         if (!listenOn) {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 11);
