@@ -189,6 +189,13 @@ public class SttLoop {
     private static boolean isEcho(String text, String anchor) {
         try {
             if (text == null || anchor == null || anchor.isEmpty()) return false;
+            String t = text.trim().toLowerCase();
+            // NEVER drop questions or commands - short follow-ups ("who is lauren?") are the
+            // most important utterances and look exactly like echoes (all content words repeat)
+            if (text.contains("?")) return false;
+            if (t.startsWith("who ") || t.startsWith("what ") || t.startsWith("when ")
+                    || t.startsWith("where ") || t.startsWith("why ") || t.startsWith("how ")
+                    || t.startsWith("tell me") || t.startsWith("remember")) return false;
             String a = anchor;
             int p = a.indexOf("conversation transcript.");
             if (p >= 0) a = a.substring(p + "conversation transcript.".length());

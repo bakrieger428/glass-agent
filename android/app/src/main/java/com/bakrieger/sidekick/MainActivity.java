@@ -468,10 +468,13 @@ public class MainActivity extends Activity {
         Diag.log("stt: \"" + (text.length() > 60 ? text.substring(0, 60) + "..." : text) + "\"");
         // voice commands (matched before fact-check, never stored)
         String lower = text.toLowerCase(Locale.US);
+        // normalize: collapse punctuation and whitespace so whisper's double spaces
+        // and stray periods can't break command matching ("remember  that", "remember. that")
+        String norm = lower.replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim();
         // memory commands
-        if (lower.contains("who is") && lower.split("\\s+").length >= 3) {
-            String name = text.trim();
-            int wi = lower.indexOf("who is");
+        if (norm.contains("who is") && norm.split(" ").length >= 3) {
+            String name = norm;
+            int wi = norm.indexOf("who is");
             if (wi >= 0 && wi + 6 < name.length()) {
                 name = name.substring(wi + 6).trim().split("[.,!?]")[0].trim();
                 if (!name.isEmpty() && name.length() <= 40) {
@@ -481,11 +484,9 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        if (lower.contains("remember that")) {
-            String fact = text.trim();
-            int ri = lower.indexOf("remember that");
-            if (ri >= 0) fact = text.trim().substring(ri + 13).trim();
-            fact = fact.split("[.]")[0].trim();
+        if (norm.contains("remember that")) {
+            int ri = norm.indexOf("remember that");
+            String fact = norm.substring(ri + 13).trim();
             if (fact.length() >= 3) {
                 Diag.log("voice: remember that ...");
                 GlassMemory.addNote(this, fact);
@@ -493,6 +494,15 @@ public class MainActivity extends Activity {
                 addHistory("\u25B8 REMEMBERED: " + fact);
                 return;
             }
+        }
+        boolean questionish = norm.endsWith("?") || norm.startsWith("who ") || norm.startsWith("what ")
+                || norm.startsWith("when ") || norm.startsWith("where ") || norm.startsWith("why ")
+                || norm.startsWith("how ") || norm.startsWith("tell me ") || norm.startsWith("can you ")
+                || norm.startsWith("do you ") || norm.startsWith("is there ") || norm.startsWith("are there ");
+        if (questionish && norm.split(" ").length >= 3) {
+            Diag.log("voice: question");
+            handleVoiceQuestion(text.trim());
+            return;
         }
         if (lower.contains("sidekick")) {
             if ((lower.contains("listen off") || lower.contains("stop listening")) && listenOn) {
@@ -600,6 +610,25 @@ public class MainActivity extends Activity {
                     logEpisode(q, answer, "typed");
                     speak(answer);
                 });
+    }
+
+    /** Answer any spoken question using memory context + the fast text model. */
+    private void handleVoiceQuestion(String q) {
+        String mem = GlassMemory.contextFor(this, q);
+        addHistory("Q: " + q);
+        String sys = "You are a concise voice assistant on smart glasses. Answer in ONE short spoken "
+                + "sentence. Use the provided memory notes if they are relevant; if you don't know, say so briefly.";
+        AiRouter.askText(this, sys, "Memory notes:\n" + (mem.isEmpty() ? "(none)" : mem) + "\n\nQuestion: " + q, 160,
+            answer -> runOnUiThread(() -> {
+                if (answer == null || answer.trim().isEmpty()) {
+                    Diag.log("qa: empty");
+                    return;
+                }
+                String a = answer.trim();
+                speak(a);
+                addHistory("\u25B8 " + a);
+                Diag.log("qa: answered");
+            }));
     }
 
     private void handleWhoIs(String name) {
@@ -717,7 +746,7 @@ public class MainActivity extends Activity {
     }
 
     private String statusJson() {
-        return "{\"app\":\"sidekick\",\"version\":\"0.4.8\""
+        return "{\"app\":\"sidekick\",\"version\":\"0.4.9\""
             + ",\"battery\":\"" + batteryPct() + "\""
             + ",\"ip\":\"" + (wifiIp() != null ? wifiIp() : "null") + "\""
             + ",\"auto\":" + autoOn
