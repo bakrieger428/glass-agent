@@ -23,7 +23,7 @@ public class SttLoop {
         void onTranscript(String text, String error);
     }
 
-    private static final int CHUNK_MS = 10000;
+    private static final int CHUNK_MS = 8000;
 
     private final Context ctx;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -108,7 +108,9 @@ public class SttLoop {
                 if (isLikelyHallucination(text)) {
                     Diag.log("stt: drop phantom \"" + (text == null ? "" : text.trim()) + "\"");
                 } else if (isEcho(text, promptTail)) {
-                    Diag.log("stt: drop echo loop");
+                    String short_ = text.trim();
+                    if (short_.length() > 60) short_ = short_.substring(0, 60) + "...";
+                    Diag.log("stt: drop echo \"" + short_ + "\"");
                 } else {
                     lastTail = text.length() > 200 ? text.substring(text.length() - 200) : text;
                     if (cb != null) ui.post(() -> cb.onTranscript(text, null));
@@ -160,24 +162,48 @@ public class SttLoop {
         return false;
     }
 
-    /** Echo-loop detector: >=80% token overlap with the anchor = whisper repeating itself. */
+        private static final java.util.Set<String> STOPWORDS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "the", "this", "that", "these", "those", "and", "with", "for", "from", "have", "just",
+            "about", "would", "could", "should", "there", "their", "going", "really", "think",
+            "because", "which", "where", "what", "when", "your", "mine", "into", "over", "than",
+            "then", "them", "they", "been", "being", "were", "will", "want", "like", "know",
+            "sure", "work", "working", "works", "though", "thank", "thanks", "appreciate", "last",
+            "better", "maybe", "okay", "well", "good", "right", "yeah", "okay", "gonna", "wanna"));
+
+    private static java.util.Set<String> contentWords(String s) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        if (s == null) return out;
+        for (String w : s.toLowerCase().replaceAll("[^a-z ]", " ").split("\\s+")) {
+            if (w.length() >= 4 && !STOPWORDS.contains(w)) out.add(w);
+        }
+        return out;
+    }
+
+    /**
+     * Echo-loop detector, v2. The v0.4.6 version compared raw tokens including my own
+     * neutral prefix and stop-words, which made ~every ordinary sentence an 80% match -
+     * it silently ate real speech. Now: compare CONTENT words only (>=4 chars,
+     * stopword-filtered), strip the prompt prefix, and only drop SHORT chunks (<=5
+     * content words) that are >=90% repeats of the anchor.
+     */
     private static boolean isEcho(String text, String anchor) {
         try {
             if (text == null || anchor == null || anchor.isEmpty()) return false;
-            java.util.Set<String> a = new java.util.HashSet<>(java.util.Arrays.asList(
-                    anchor.toLowerCase().replaceAll("[^a-z ]", " ").trim().split("\\s+")));
-            java.util.Set<String> b = new java.util.HashSet<>(java.util.Arrays.asList(
-                    text.toLowerCase().replaceAll("[^a-z ]", " ").trim().split("\\s+")));
-            if (a.isEmpty() || b.isEmpty()) return false;
+            String a = anchor;
+            int p = a.indexOf("conversation transcript.");
+            if (p >= 0) a = a.substring(p + "conversation transcript.".length());
+            java.util.Set<String> ac = contentWords(a);
+            java.util.Set<String> bc = contentWords(text);
+            if (bc.isEmpty() || bc.size() > 5 || ac.isEmpty()) return false;
             int overlap = 0;
-            for (String w : b) if (a.contains(w)) overlap++;
-            return overlap >= 0.8 * b.size();
+            for (String w : bc) if (ac.contains(w)) overlap++;
+            return overlap >= 0.9 * bc.size();
         } catch (Exception e) {
             return false;
         }
     }
 
-    private String transcribe(byte[] audio, String promptTail) throws Exception {
+private String transcribe(byte[] audio, String promptTail) throws Exception {
         String key = Prefs.get(ctx, Prefs.K_DEEPINFRA);
         if (key.length() < 8) throw new Exception("no deepinfra key");
         String boundary = "----sidekick" + System.currentTimeMillis();

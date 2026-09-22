@@ -19,6 +19,9 @@ public final class GlassMemory {
     private static final String EXTRACT_PROMPT =
         "Extract durable PERSONAL memories from this conversation transcript: facts about the "
         + "SPEAKER and the people/projects in their life - roles, relationships, names, plans, "
+        + "ONLY statements that sound like the wearer talking about their OWN life (first person). "
+        + "IGNORE television, movies, other speakers, third-person narration, and fictional content. "
+        + "If the transcript is mostly not the wearer, extract nothing. "
         + "deadlines, preferences. NEVER extract general world-knowledge claims (science, animals, "
         + "history, geography, trivia) and NEVER extract statements that are factually wrong - a "
         + "speaker saying something does not make it a memory. Return ONLY a compact JSON object "
